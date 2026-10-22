@@ -25,6 +25,7 @@ Read the relevant sections of [the task contract](references/task-contract.md) b
 | Silence, provider rejection or failed attempt | [Diagnostics](references/task-contract.md#failure-diagnostics), [bounded recovery](references/task-contract.md#bounded-recovery-route) |
 | Native reviewer and final receipt | [Bounded review, sole lifecycle owner and provenance](references/reviewer-provenance.md) |
 | Multiple slices, context recovery or review packaging | [Recovery index and evidence package](references/evidence-tools.md) |
+| Maintaining team-dev itself, tracing regressions or publishing validated changes | [Repository maintenance and history](references/repository-maintenance.md) |
 
 ## Execute one bounded slice
 
