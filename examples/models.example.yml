@@ -1,0 +1,11 @@
+# Replace the endpoint with your provider's API root, not /chat/completions.
+# Keep the key as an environment-variable reference; team-dev supplies its value.
+providers:
+  opencode-ds:
+    baseUrl: https://api.example.invalid/v1
+    api: openai-completions
+    apiKey: OMP_OPENCODE_API_KEY
+    models:
+      - id: deepseek-v4.1-flash
+        name: DeepSeek V4.1 Flash
+        input: [text]

@@ -1,0 +1,4 @@
+interface:
+  display_name: "三模型协作开发"
+  short_description: "Astra 主控、本地 DeepSeek 编码、Sol 审核，支持 SSH 远端测试"
+  default_prompt: "使用 $team-dev 完成当前代码任务，由本地 DeepSeek 实现、Sol 审核，并验证目标环境中的结果。"

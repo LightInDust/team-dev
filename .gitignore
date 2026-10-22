@@ -1,0 +1,32 @@
+# Local credentials and configuration (examples use *.example.* names).
+.env
+.env.*
+!.env.example
+credentials.json
+runtime.json
+models.yml
+models.yaml
+config.yml
+config.yaml
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+
+# Private execution evidence and local scratch must stay outside this repository.
+/.local/
+/.config/
+/.omp/
+/runs/
+/artifacts/
+/test-artifacts/
+/logs/
+*.log
+*.jsonl
+
+# Generated files.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.DS_Store

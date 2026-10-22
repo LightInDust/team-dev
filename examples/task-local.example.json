@@ -1,0 +1,22 @@
+{
+  "agent_runtime": "local",
+  "worker_model": "opencode-ds/deepseek-v4.1-flash",
+  "worker_thinking": "low",
+  "budget_mode": "auto",
+  "effort_assessment": {
+    "by": "astra",
+    "reason": "A bounded change with fixed interfaces and observable tests"
+  },
+  "target": {
+    "transport": "local",
+    "host": null,
+    "repo": "/absolute/path/to/your/git/repository"
+  },
+  "goal": "Replace this with one independently testable implementation goal",
+  "context_paths": ["README.md"],
+  "allowed_paths": ["module.py", "test_module.py"],
+  "acceptance": ["Replace this with the observable acceptance requirements"],
+  "constraints": ["Only change the declared files; preserve unrelated work"],
+  "test_commands": [["python3", "-B", "-m", "unittest", "-v"]],
+  "test_timeout_seconds": 60
+}
