@@ -99,3 +99,24 @@ JSON document's keys or rereading unchanged source just to prepare a report.
 These context-size hints preserve standard-mode permissions; strict Bash still
 allows only its exact prepared tests. They never replace complete test-log
 inspection or authorize a Bash fallback when native tools are insufficient.
+
+For a target-only/no-Bash task, obtain context-size information from already
+available coordinator metadata or native-tool result metadata when provided.
+Do not request `wc`, a Python probe or another shell command solely to measure
+the context. Size is not evidence that the content was read. Line selectors
+cannot split an oversized single JSON line, and repeated ranges or grep hits
+do not prove access to fields hidden by a tool's output limit. If required
+fields remain inaccessible, name the fields and return `NEEDS_CONTEXT`; do not
+guess them or substitute a synthetic fixture for a required archived input.
+
+Before a fresh preparation, Astra can provide an authorized, bounded readable
+view alongside the unchanged canonical input: record source path/hash, byte and
+line counts, selected field paths or record IDs, and the view's own identity.
+Select that view into the captured context. Preserve relevant values, types,
+order and null/missing semantics; a normal JSON parse/reserialize view does not
+preserve duplicate keys or exact source bytes, so it cannot stand in for checks
+of those properties. A selected view is partial context, not whole-file review
+or an alternative runtime input. If obtaining it requires unavailable target
+access, keep the blocker explicit. Do not rewrite an active frozen task or
+regenerate an archived experiment to make context readable; use the existing
+bounded recovery route and retain all original acceptance requirements.
