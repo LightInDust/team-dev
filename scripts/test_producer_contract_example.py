@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -91,6 +92,56 @@ class ProducerContractTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertFalse(receipt['passed'])
         self.assertIn('consumer test collection summary', receipt['error'])
+
+    def tap_counts(self, output):
+        counts = {}
+        for key in ('tests', 'pass', 'fail', 'cancelled', 'skipped', 'todo'):
+            matches = re.findall(r'^# ' + key + r' (\d+)\r?$', output, re.MULTILINE)
+            self.assertEqual(len(matches), 1, 'TAP summary for ' + key + ' is missing or ambiguous')
+            counts[key] = int(matches[0])
+        return counts
+
+    def test_nested_shape_stays_green_on_stale_fixture_but_current_shape_is_rejected(self):
+        # Mutate the disposable producer copy FIRST: the acceptance chain must reject
+        # this nested field shape. Original source assets stay untouched.
+        self.mutate('producer.py', "'station_count': count", "'station_count': {'value': count}")
+
+        # Stale consumer unit suite: still green on the old committed primitive fixture.
+        fixture = self.copy / 'preview.fixture.json'
+        stale_fixture = fixture.read_bytes()
+        self.assertEqual(
+            json.loads(stale_fixture.decode()),
+            [{'kind': 'preview', 'station_count': n} for n in (0, 1, 42)],
+            'Stale committed fixture must retain primitive numeric station_count values')
+        node = shutil.which('node')
+        self.assertIsNotNone(node, 'Node.js runtime is required to run the consumer suite')
+        consumer = subprocess.run(
+            [node, '--test-reporter=tap', str(self.copy / 'consumer.test.mjs'), str(fixture)],
+            cwd=self.copy, capture_output=True, text=True,
+            env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'), timeout=45)
+        self.assertEqual(consumer.returncode, 0, consumer.stderr or consumer.stdout)
+        counts = self.tap_counts(consumer.stdout)
+        self.assertEqual(counts, {'tests': 11, 'pass': 11, 'fail': 0,
+                                  'cancelled': 0, 'skipped': 0, 'todo': 0})
+
+        # The mutated producer's nested shape reaches real serialization via the generator.
+        code, receipt = self.check()
+        self.assertEqual(code, 1)
+        self.assertFalse(receipt['passed'])
+        self.assertIn('differs from current producer', receipt['error'])
+        generated = [c for c in receipt['commands']
+                     if c['argv'][-1].endswith('generate_fixture.py')]
+        self.assertEqual(len(generated), 1, 'expected exactly one fixture generation command')
+        payload = json.loads(generated[0]['stdout'])
+        self.assertEqual(
+            payload,
+            [{'kind': 'preview', 'station_count': {'value': n}} for n in (0, 1, 42)],
+            'Generator stdout must carry the nested nonempty station_count shape')
+        self.assertNotEqual(generated[0]['stdout'], stale_fixture.decode())
+        # Expected fixture bytes and the real source example stay preserved.
+        self.assertEqual(fixture.read_bytes(), stale_fixture)
+        self.assertIn("'station_count': count", (EXAMPLE / 'producer.py').read_text())
+        self.assertEqual((EXAMPLE / 'preview.fixture.json').read_bytes(), stale_fixture)
 
 
 if __name__ == '__main__':

@@ -25,6 +25,17 @@ For repeated fault subcases, recreate consumed external response sequences and m
 
 The matrix is a navigation aid and a review claim, not a completeness oracle. Astra checks that every original requirement has a row; Sol independently checks the public call path and test oracle in the existing review. Keep failed worker runs separate from takeover candidates. A field added after review requires refreshed affected acceptance evidence; it cannot inherit a previous candidate's PASS.
 
+## Exact rejection boundaries
+
+Derive edge cases from the actual contract rather than a validator's current implementation. Two useful patterns, only when those requirements apply:
+
+| Required boundary | Distinguishing public regression |
+| --- | --- |
+| Exclusively claim a previously absent output directory | Keep an absent-path success case and reject pre-existing empty directories, directories containing only an unrelated sentinel, and other existing path kinds required by the contract. Assert the complete prior entry set and bytes remain unchanged, including no new failure receipt in an unowned directory. Checking only familiar output filenames does not establish ownership; inspect the atomic directory-creation operation too. |
+| Half-open original-image coordinates | For the declared convention `0 <= x < width`, `0 <= y < height`, test a valid interior point and exact `x == width` / `y == height` rejection separately, with asymmetric dimensions. Much larger invalid values do not test the equality boundary. If the contract specifies different coordinates or inclusivity, use that convention instead; do not invent a tolerance or conversion. |
+
+Use owned disposable paths and the real public entrypoint under the declared test command. Keep the positive fixture valid through preceding gates so each boundary is actually reached; an unrelated schema error cannot satisfy these cases. This adds no permission to mutate existing user outputs, run extra worker probes or repeat scientific work.
+
 ## Acceptance ledger
 
 At handoff, DS reports each indexed requirement separately. A list entry receives `A1`, `A2`, etc.; a nonempty scalar/object acceptance value receives one `A1` pointing to `/acceptance`. IDs are local to a preparation, not stable identities across a fix round. Cross-reference the original text when comparing runs. Missing or empty acceptance produces no rows and is a contract gap, not success. List entries are indexed even if malformed; indexing does not validate them.

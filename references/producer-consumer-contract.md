@@ -8,6 +8,22 @@ Choose the evidence mode first. For a live API/UI integration with authorized re
 
 Classify the boundary by what it calls or consumes, not whether its files are new. A new runner configuring an existing backend and a new renderer reading an existing producer are integration work. Select the actual selector/binding, producer and meaning-defining helpers in `context_paths`/`interface_contracts.source_paths`, and name the executable integration command. The helper checks declared fields, not whether Astra classified the work correctly. Written schema plus a self-consistent synthetic fixture cannot establish compatibility with an omitted producer.
 
+### Coordinator context check before prepare
+
+For a consumer of a changed export, reconcile these three items before freezing the handoff:
+
+| Item | Evidence to select and check |
+| --- | --- |
+| Applicable producer | The producing source/serializer and meaning-defining helpers for the selected artifact version, with their source identity. For a new export, an older similarly named example is insufficient; for a historical archive, do not silently substitute a newer incompatible producer. |
+| Representative serialized input | A small producer-generated or hash-bound archived sample with nonempty instances of every new or changed representation the consumer must handle. Inspect actual nesting, primitive/object types, required keys, cardinalities and identifier/index semantics. Record the sample's origin and any authorized record-selection rule; preserve retained record structure instead of rewriting it to fit a guessed schema. |
+| First executable boundary | An existing declared command that feeds that sample through the real consumer entrypoint and checks independently specified values/identity links. A sample that omits the changed field cannot establish compatibility with its nonempty form. Keep branch fixtures, but do not count their agreement with the consumer as this check. |
+
+Put the producer and representative sample in the existing `context_paths` and relevant `interface_contracts.source_paths`; include fixture/test destinations in `allowed_paths` when the task requires retained integration coverage. The helper checks selected-file presence, not whether a source is authoritative or a sample represents the needed fields. Astra checks these facts before dispatch, and Sol checks the same bindings during ordinary review. If a required representation is absent, report the precise missing source/sample and keep integration pending; use the existing bounded context-recovery route rather than inventing it or starting another unchecked implementation.
+
+For example, a list of records containing a retained global index and a coordinate pair is a different interface from a list of coordinate pairs alone. Do not replace an explicit identifier with its list position or make an omitted field optional without source/contract support. For archived evidence, this context check permits source reading and authorized immutable slicing only; it does not authorize importing a historical producer, rerunning inference or regenerating an experiment. If a minimal authentic sample cannot be supplied within the task's constraints, retain that blocker.
+
+### Exercise the selected interface
+
 Before broader validation or report scaffolding, identify one small check that can disprove the core interface. Use the existing declared test command and task-authorized execution only:
 
 | Boundary | First useful check | Independent expectation |
@@ -215,7 +231,7 @@ If Node is outside PATH, pass `--node /absolute/path/to/node`. Missing Node fail
 - `generate_fixture.py` seeds 0, 1 and 42 rows in temporary SQLite and invokes that serializer. It does not re-create the returned fields. No normalization is used.
 - `consumer.mjs` updates a small view interface (`textContent` and `disabled`); its tests read the generated fixture path and assert display and confirmation state. A real web project should use its real DOM/state/request layer and original framework.
 - `check_contract.py` runs generation, checks the committed `preview.fixture.json` byte-for-byte, then executes the consumer tests against the fresh temporary JSON. A failure never overwrites the committed fixture. It requires a nonzero TAP test count, all passed, with no skips. It prints a JSON receipt containing source hashes, fixture hashes, argv, runtime versions and captured test output after checking source stability. All those assertions must pass for exit zero.
-- `scripts/test_producer_contract_example.py` runs the intact chain and mutates isolated copies to prove it rejects producer-key drift, consumer-key drift, wrong producer types, stale fixtures, an empty consumer test file and an unavailable runtime.
+- `scripts/test_producer_contract_example.py` runs the intact chain and mutates isolated copies to prove it rejects producer-key drift, consumer-key drift, wrong producer types, stale fixtures, an empty consumer test file and an unavailable runtime. Its shared-assumption regression first shows the existing consumer suite passing on its old fixture after the copied producer changes a primitive field into a nested object, then requires the real generation-to-consumer acceptance chain to reject the mismatch. That counterexample demonstrates why green consumer tests alone are insufficient; it does not certify another project's handoff or replace its authentic integration sample.
 
 To deliberately regenerate the example fixture after reviewing a contract change, invoke `generate_fixture.py` and save its stdout to the exact declared fixture file in the working candidate, then inspect the diff and rerun the check. Production adaptations should reuse the project's real serializer and consumer; copying this example's producer into tests would recreate the original testing gap.
 
