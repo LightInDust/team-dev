@@ -23,7 +23,7 @@ Read the relevant sections of [the task contract](references/task-contract.md) b
 | Async/background tools, including steering during Bash | [Per-invocation result and resource lifecycle](references/async-bash-lifecycle.md) |
 | Remote source or tests | [Local/target execution matrix](references/task-contract.md#local-execution-and-target-only-checks), [SSH keepalive](references/task-contract.md#ssh-command-keepalive), [bounded source capture](references/task-contract.md#bounded-ssh-source-capture), [transport failure during finalization](references/task-contract.md#transport-failure-during-finalization) |
 | Silence, provider rejection or failed attempt | [Diagnostics](references/task-contract.md#failure-diagnostics), [bounded recovery](references/task-contract.md#bounded-recovery-route) |
-| Native reviewer and final receipt | [Bounded review, sole lifecycle owner and provenance](references/reviewer-provenance.md) |
+| Native reviewer and final receipt | [Bounded review, sole lifecycle owner and provenance](references/reviewer-provenance.md); select the [consuming evidence root](references/reviewer-provenance.md#choose-the-consuming-evidence-root) before generating reviewer fields |
 | Multiple slices, context recovery or review packaging | [Recovery index and evidence package](references/evidence-tools.md) |
 | Maintaining team-dev itself, tracing regressions or publishing validated changes | [Repository maintenance and history](references/repository-maintenance.md) |
 

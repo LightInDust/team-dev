@@ -20,11 +20,26 @@ The named owner chooses a scope-proportional checkpoint in the existing handoff,
 
 ## Parent-owned dispatch record
 
-After the actual `collaboration.spawn_agent` call succeeds, copy the complete [dispatch template](../assets/reviewer-dispatch.template.json) into a new private JSON file under the run/evidence root. Fill `source.reference` from the visible parent tool exchange, `request` from the actually supplied routing fields, and `response.task_name` from the accepted response. Retain the template's `version`, `tool` and `source.kind`; reconstructing only request/response previously omitted these required fields. The blank template is deliberately invalid and is not dispatch evidence. Do not fill a planned response before the tool returns, ask the reviewer to invent dispatch, or copy secrets, unrelated messages or model reasoning.
+After the actual `collaboration.spawn_agent` call succeeds, copy the complete [dispatch template](../assets/reviewer-dispatch.template.json) into a new private JSON file under the [consuming evidence root](#choose-the-consuming-evidence-root). Fill `source.reference` from the visible parent tool exchange, `request` from the actually supplied routing fields, and `response.task_name` from the accepted response. Retain the template's `version`, `tool` and `source.kind`; reconstructing only request/response previously omitted these required fields. The blank template is deliberately invalid and is not dispatch evidence. Do not fill a planned response before the tool returns, ask the reviewer to invent dispatch, or copy secrets, unrelated messages or model reasoning.
 
 The request may retain other actually supplied parameters. Save the original accepted agent identity exactly; do not fill a planned name before the tool returns. Save as a private JSON file in the helper run/evidence root, then calculate its SHA-256. The supported response is the tool's `{ "task_name": ... }` result, not an invented response containing a model.
 
 When reusing an agent via `followup_task`, retain that agent's **original accepted spawn record** and mark `reused_agent: true`. A new instruction telling it “you are Sol” or asking its model is not new routing evidence. If the original record is unavailable, preserve the code review but mark routing unknown; a new explicitly routed native reviewer can perform bounded acceptance of the existing artifacts without repeating implementation or experiments. Do not relabel an old agent or overwrite an old review to match the preferred SKU.
+
+## Choose the consuming evidence root
+
+Choose the root from the operation that will consume the review, before saving dispatch or generating fields:
+
+| Consumer | Root used to resolve `reviewer_provenance.dispatch_evidence.file` |
+| --- | --- |
+| Normal `team_dev.py record-review --run ...` and `finalize --run ...` | That exact helper run directory. Use it as `review_handoff.py template --evidence-root` too. The location of the JSON supplied through `--review` does not change this root. |
+| Independent coordinator/takeover receipt | The dedicated directory supplied to `review_handoff.py receipt --evidence-root`. Generate fields and validate provenance against that same directory. This receipt does not finalize a helper run. |
+
+A template generated successfully in an experiment or reporting directory only proves its dispatch is valid there. It does not copy the dispatch into a helper run or verify that normal `record-review` can find it. A matching basename in another directory is insufficient; the actual regular file in the consuming root must match the pinned SHA-256 and original accepted dispatch.
+
+If the only defect is that the authentic dispatch exists in a different evidence directory, preserve the rejected invocation and original files. Verify the source bytes against the review's pinned digest and accepted parent dispatch, then place an identical regular-file copy at the expected basename in the consuming root when that destination is absent. If it already exists, verify it; do not overwrite different bytes or replace a symlink to bypass rejection. Validate provenance against the consuming root before retrying `record-review`, then follow the existing successful-exit gate before `finalize`.
+
+When candidate, tests, process evidence, review judgment and dispatch bytes are unchanged, this placement correction does not require another model review, worker run or business experiment; retain the same review bytes and original failure. A hash/identity conflict, invalid record or changed acceptance evidence is a different defect and remains blocking under the existing correction/review rules. Missing-file placement is a coordinator evidence-location error, not evidence of a model, API or SSH failure. Keep the basename, size, symlink, hash and provenance checks intact; never weaken them to accept an external path.
 
 ## Review schema
 
@@ -162,8 +177,10 @@ For remote verification after tests have already passed, see [transport failure 
 Give the reviewer the exact schema above in its context, including top-level `model` and `effort`. Immediately after saving the completed dispatch template, use the existing command to validate it and generate concrete fields, so schema errors do not first appear at final closeout:
 
 ```text
-python3 -B scripts/review_handoff.py template --evidence-root /absolute/evidence --dispatch reviewer-dispatch.json
+python3 -B scripts/review_handoff.py template --evidence-root /absolute/helper-run --dispatch reviewer-dispatch.json
 ```
+
+This example is for normal helper review: `/absolute/helper-run` is the same directory used by `record-review --run`. For an independent receipt, substitute its dedicated consuming evidence root as described above.
 
 Send the returned JSON to that same reviewer in the existing review stage and ask it to copy these field names alongside its independently determined verdict, findings and candidate/process bindings. The generator validates the saved original dispatch, derives the accepted agent ID and file hash, and prints only the metadata (not the applied `fingerprint` or complete process review); it writes no file and supplies no PASS verdict. There is no need for another reviewer stage. For a reused agent, add `--reused-agent` and retain its original spawn evidence. Keep an existing actual self-report explicitly attributed rather than replacing history with a default `unknown` label.
 
