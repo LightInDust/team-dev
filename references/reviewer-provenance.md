@@ -149,6 +149,14 @@ record what actually ran and its then-incomplete helper state. Keep later schema
 correction/finalization separate; it cannot retroactively make the earlier gate
 successful. Do not repeat completed scientific work to repair that chronology.
 
+## Bind coordinator tests to the selected candidate
+
+After copying a candidate or changing takeover directories, prepare each coordinator test invocation from the current absolute repository root and declared argv. Before execution, compare the invocation's actual `cwd`/resolved repository root, relevant HEAD when applicable, and source/test manifest with the candidate being accepted; do not reuse a previous command's directory by habit. Keep identity/hash inspection in the authorized coordinator workflow, not as extra Bash probes for a restricted worker.
+
+Retain that candidate binding with the exact argv, environment, terminal exit, complete logs and hashes. Check for relevant source changes across execution before reusing the result. A test launched in another snapshot may describe that snapshot, but cannot verify the selected candidate even if it is green or the directory names look similar. Preserve the mistaken invocation as a coordinator error, exclude it from the selected candidate's acceptance, and run only the still-required check from the correct bound directory. Do not attribute that command's failures to the worker or overwrite the failed worker/takeover chronology.
+
+For remote verification after tests have already passed, see [transport failure during finalization](task-contract.md#transport-failure-during-finalization) before retrying tests or changing routes.
+
 ## Exact fields in the reviewer handoff
 
 Give the reviewer the exact schema above in its context, including top-level `model` and `effort`. Immediately after saving the completed dispatch template, use the existing command to validate it and generate concrete fields, so schema errors do not first appear at final closeout:
