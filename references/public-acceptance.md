@@ -89,6 +89,24 @@ An enclosing adequacy test may finish green only after explicitly observing the 
 
 For null/zero/rejected observations, derive the fixture and oracle from the [actual producer semantics](producer-consumer-contract.md#numeric-zero-null-and-rejected-observations). A fully passing suite can still encode the same incorrect normalization as the implementation. Classify confirmed mismatches as semantic/acceptance defects even when tool execution and test receipts are complete; changing reasoning effort or timeout does not repair the missing oracle.
 
+### Directional counts and denominators
+
+For a metric whose meaning depends on direction, write the literal truth-to-prediction transitions, eligible population and counting unit in the existing contract before implementation. False acceptance and false rejection, source and destination, or positive and negative directions are not interchangeable. State how unknown truth and undecided predictions affect the numerator and denominator. Derive these rules from the declared evaluation semantics, not the current predicate or a convenient label name.
+
+A complete confusion table can still hide a reversal: two transitions in each opposing direction give the same pooled count under either predicate. Keep useful aggregate conservation checks, but assert the affected public output for each independently addressable cell or a small asymmetric fixture. Use literal expected counts/populations, not a test-side copy of the production condition. A real integration sample with no distinguishing event cannot replace this direction regression. For grouped outputs, bind expectations to the full required group key so opposite directions cannot cancel across groups.
+
+For an observed reverse/swap or denominator-selection fault, demonstrate sensitivity within the existing test framework: keep the public call, fixture and oracle unchanged, substitute that specific fault in an owned copy or scoped runtime seam, and require the same assertion to fail for the intended metric/cell. Restore the implementation and require that assertion to pass. A changed expectation, unrelated exception or independently invented mutant output is not this evidence. Scope the check to the affected requirement; do not add an exhaustive mutation framework to unrelated tasks.
+
+The small [directional summary example](../assets/directional-metrics/summary.py) has a public `summarize(rows)` function. Its synthetic labels are `alpha`, `beta`, `outside` and unknown truth; predictions are `alpha`, `beta`, `outside` or `None`. It counts `false_accept` only for outside-truth rows predicted as alpha/beta. Its `negative_total` denominator includes every outside-truth row, including undecided ones; unknown truth never enters either count. `total`, `unknown_truth` and `undecided` preserve separate observation counts. These semantics illustrate one explicit contract, not a required taxonomy or denominator for other projects.
+
+[The retained regression](../scripts/test_directional_metrics_example.py) uses 16 separate literal cells, an asymmetric denominator case, and the same public assertion under an isolated reverse-predicate mutation. Its symmetric aggregate control deliberately remains green under that mutation to expose the blind spot. Run it with:
+
+```bash
+python3 -B -m unittest discover -s scripts -p test_directional_metrics_example.py -v
+```
+
+This example validates the demonstration only. Apply the affected oracle to the real project's public summary boundary under its existing authorization; do not rerun frozen scoring or experiments to manufacture evidence.
+
 ## Public launcher identity example
 
 For example, a launcher may select a method from a frozen manifest, call an observer, then save a diagnostic. If that contract binds `object_id` and `station` to the method-specific case, the launcher's real `main` must compare the returned fields with that selected case before accepting the diagnostic or marking completion. Valid input/source/weight hashes establish byte identity; they do not establish that the returned observation belongs to the selected case. These field names are an example, not required fields for every project: use only the business identity and guard decisions fixed by the actual contract.
