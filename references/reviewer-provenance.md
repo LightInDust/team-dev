@@ -98,10 +98,10 @@ is the executable schema; the metadata-only generator does not fill these slots.
 
 | Evidence predicate | Required `process_review` slot and reviewer responsibility |
 | --- | --- |
-| Process review is enabled | `verdict`, full `binding`, and nonempty `reason`; a PASS requires an independently justified `verdict: "pass"`. |
-| `binding.preexec_gate.denied_requests` is nonzero | Nonempty `preexec_denial_resolution`: identify the prevented request, actual denial/result and later behavior. Distinguish a pre-execution block from an executed violation. Prose in findings or `reason` does not replace this named field. |
-| `binding.audit.status_counts.unsupported_syntax` or `over_limit` is nonzero | Nonempty `coverage_resolution`: inspect the actual command arguments/results outside automatic audit coverage. |
-| `binding.audit.text_observation_counts.absolute_tmp_path_mention` is nonzero | Nonempty `temporary_path_resolution`: disposition actual owned/retained paths and resource evidence, without treating a text mention as proof of execution. |
+| Process review is enabled | `verdict`, full `binding`, and a nonempty JSON string `reason`; a PASS requires an independently justified `verdict: "pass"`. |
+| `binding.preexec_gate.denied_requests` is nonzero | Nonempty JSON string `preexec_denial_resolution`: identify the prevented request, actual denial/result and later behavior. Distinguish a pre-execution block from an executed violation. Prose in findings or `reason` does not replace this named field. |
+| `binding.audit.status_counts.unsupported_syntax` or `over_limit` is nonzero | Nonempty JSON string `coverage_resolution`: inspect the actual command arguments/results outside automatic audit coverage. |
+| `binding.audit.text_observation_counts.absolute_tmp_path_mention` is nonzero | Nonempty JSON string `temporary_path_resolution`: disposition actual owned/retained paths and resource evidence, without treating a text mention as proof of execution. |
 | The frozen process policy requires async review (v2 and later) | `async_jobs`, including `[]` when none exist. For observed jobs supply the exact per-invocation records and bound lifecycle receipts from [async review](async-bash-lifecycle.md#ordinary-sol-review-with-per-job-evidence). |
 
 An observed predicate selects a required field, not its conclusion. Empty text,
@@ -110,6 +110,56 @@ Sol's inspection. Nonempty `binding.blocked_requests`, malformed/incomplete
 bindings and unresolved lifecycle evidence still block acceptance; adding a
 resolution field cannot waive them. Preserve the frozen policy version of older
 runs rather than adding or removing markers to change these requirements.
+
+These named text slots reject objects, arrays, numbers, booleans, `null`, and
+empty or whitespace-only strings when required. Structured detail may remain in
+separate supplementary fields; it does not replace the named string or acquire
+schema validation merely by being included. For example, this **fragment inside
+`process_review`** illustrates types only, not a complete review or reusable judgment:
+
+```json
+{
+  "coverage_resolution": "Inspected synthetic call example-1 and its full saved result: the unsupported quoted command read the authorized fixture; no write occurred.",
+  "coverage_resolution_details": {
+    "tool_call_id": "example-1",
+    "observed_action": "read authorized fixture"
+  }
+}
+```
+
+Before returning a completed normal review for `record-review`, validate its
+saved draft against the actual run with the same helper version used for
+closeout. Replace the three absolute paths below with the selected helper's
+scripts directory, consuming run directory, and review draft. This is a
+read-only process-schema preflight, with bytecode writes disabled:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/absolute/team-dev/scripts python3 -B - /absolute/helper-run /absolute/sol-review-v2.json <<'PY'
+import json
+import sys
+from pathlib import Path
+from process_evidence import enabled, validate_review
+
+run, review_path = map(Path, sys.argv[1:])
+task = json.loads((run / "task.json").read_text())
+meta = json.loads((run / "metadata.json").read_text())
+review = json.loads(review_path.read_text())
+if not enabled(task, meta):
+    raise SystemExit("Process review is not enabled; use this run's frozen contract.")
+validate_review(run, task, meta, review)
+print("Process review preflight passed.")
+PY
+```
+
+Inspect the terminal exit before submitting the review. This checks the process
+binding, required text types and applicable lifecycle evidence; it does not
+replace candidate/test/provenance checks or the `record-review` and `finalize`
+gates. If only a text-slot type is wrong, retain the rejected review and failure,
+have the same reviewer save a separately named correction with an evidence-based
+string and the original details, and repeat this preflight. Unchanged candidate,
+tests and evidence do not require another worker or business calculation for
+that formatting correction. Do not coerce an object into generic text, waive the
+validator, overwrite a prior receipt, or rewrite a frozen run to pass it.
 
 `candidate_fingerprint` and `candidate_manifest_sha256` may be supplementary
 context but are not aliases for top-level `fingerprint`. `record-review` rejects
