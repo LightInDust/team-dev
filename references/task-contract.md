@@ -6,6 +6,7 @@ The helper's task format is:
 {
   "agent_runtime": "local",
   "worker_model": "opencode-ds/deepseek-v4.1-flash",
+  "worker_bash_mode": "declared_tests_only",
   "worker_thinking": "low",
   "budget_mode": "auto",
   "effort_assessment": {"by": "astra", "reason": "Small change with a fixed interface and clear tests"},
@@ -14,11 +15,18 @@ The helper's task format is:
   "context_paths": ["README.md"],
   "allowed_paths": ["module.py", "test_module.py"],
   "acceptance": ["Observable requirements"],
-  "constraints": ["Relevant project restrictions"],
+  "constraints": ["Bash runs only exact prepared test invocations; use native read/grep/glob for inspection", "Relevant project restrictions"],
   "test_commands": [["/usr/bin/python3", "-m", "unittest", "-v"]],
   "test_timeout_seconds": 60
 }
 ```
+
+This example explicitly selects `declared_tests_only`. Choose `worker_bash_mode`
+before preparation: use that value for a tests-only Bash restriction, or explicitly
+choose `standard` when the task authorizes broader shell use. Omission still
+defaults to `standard`; text in `constraints` does not select a mode or enable
+interception. Standard mode does not waive task restrictions. Follow the
+[mode check before launch](#exact-bash-mode) even when copying a previous task.
 
 New tasks default to `opencode-ds/deepseek-v4.1-flash`. Preparation saves `worker_model` in both task and metadata; launch and acceptance require both copies to agree. Existing runs retain their saved V4 or V4.1 selector, while markerless historical runs retain V4. Do not edit an old run to migrate it: prepare a fresh task. The local profile keeps the historical model definition for compatibility; this does not assert that the old upstream remains available. Endpoint, credential source, proxy and effort/budget profiles are unchanged.
 
@@ -360,7 +368,25 @@ For a task whose Bash scope is only its declared tests, set this input before `p
 {"worker_bash_mode": "declared_tests_only"}
 ```
 
-Omitting it selects `standard`, preserving the existing observed-command checks. Natural-language restrictions are not automatically classified. Astra must select the strict mode when giving a tests-only contract; this does not add Sol preflight or a second planner. New preparation freezes `worker_bash_policy` v2 in both task and metadata, independently of execution policy v2. Standard tasks use process policy v3; new strict tasks use process v4 and `worker_bash_gate` v1. Historical strict runs with process v3 remain observational. Frozen Bash v1 retains its original command/timeout-only rule and exact audit schema; preparations without either Bash marker also keep their original behavior. Do not edit old runs to retrofit or reclassify their completion.
+Omitting it selects `standard`, preserving the existing observed-command checks. Natural-language restrictions are not automatically classified. Astra must select the strict mode when giving a tests-only contract; this does not add Sol preflight or a second planner. New preparation freezes `worker_bash_policy` v2 in both task and metadata, independently of execution policy v2. Standard tasks use process policy v3; new strict tasks use process v4 and `worker_bash_gate` v2. Historical strict runs with process v3 remain observational. Frozen Bash v1 retains its original command/timeout-only rule and exact audit schema; preparations without either Bash marker also keep their original behavior. Do not edit old runs to retrofit or reclassify their completion.
+
+Before `start`, compare the task's shell restriction with the saved `task.json`
+and `metadata.json`: both `worker_bash_policy` copies must agree and their `mode`
+must be the intended value. A new tests-only preparation must also have matching
+`worker_bash_gate` records and process-evidence policy v4. Check the prepared
+prompt's strict routing and exact test catalog. These are coordinator checks of
+the selected configuration, not proof that OMP has registered the gate or that
+the worker has complied; launch validation and actual process evidence remain
+required. No natural-language conflict detector is implemented.
+
+If the input omitted `worker_bash_mode` while the written task restricted Bash
+to tests, do not launch that prepared standard run. Preserve it and prepare a
+corrected input with explicit mode. If a worker already started, follow the
+[bounded recovery route](#bounded-recovery-route), confirm its exit before
+conflicting work, and retain any actual process deviation. A fresh strict run
+consumes the existing recovery allowance for the unchanged deliverable. Never
+patch saved policy/constraint fields, relabel the original run, or treat
+read-only shell probes as authorized merely because standard mode allowed them.
 
 Strict mode permits only exact strings from `worker_direct_test_commands` or `worker_logged_test_commands` in the prepared prompt. Direct strings use `shlex.join` on the exact test argv with `env PYTHONDONTWRITEBYTECODE=1`; logged strings use the existing status-preserving full-output envelope. Only leading/trailing whitespace is ignored. Bash arguments may have `command`, optional finite numeric `timeout` in `(0, 3600]` seconds, and in v2 an optional `cwd` copied verbatim from `worker_bash_snapshot_cwd`. Omitted cwd uses the OMP session launched at that snapshot; an explicit cwd must be the identical frozen absolute snapshot string. No path normalization, symlink/variable/URI expansion or relative alias is accepted. `.` and a different run's snapshot are rejected. Other execution controls, including `pty` and `async`, remain rejected. This does not extend the total/closeout budgets. An alternate interpreter, `cd`, appended command, pipeline, modified envelope, `wc` or manual Python probe fails matching, even with `-B` and even if read-only. Use read/grep/glob tools for JSON, source and saved-log inspection. If those cannot supply needed context, report the blocker; the coordinator can prepare a bounded summary or a fresh appropriately scoped task.
 
