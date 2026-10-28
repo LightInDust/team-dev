@@ -107,6 +107,45 @@ python3 -B -m unittest discover -s scripts -p test_directional_metrics_example.p
 
 This example validates the demonstration only. Apply the affected oracle to the real project's public summary boundary under its existing authorization; do not rerun frozen scoring or experiments to manufacture evidence.
 
+### Correct, wrong and undecided outcomes in reports
+
+For evaluation tasks that permit undecided predictions, specify the eligible
+truth population and a disjoint outcome partition before implementation. For
+known truth, `correct + wrong + undecided = observations`; `wrong` counts decided
+incorrect predictions, so `observations - correct` is not a wrong count when
+undecided rows exist. State how unknown truth, excluded rows and each accuracy
+denominator are handled; do not silently apply the known-truth partition to them.
+
+Retain separate literal truth-to-prediction cases and a mixed fixture with
+nonzero undecided rows, including a zero-wrong case. Independently assert the
+public derived summary and the final saved report's visible labels and values,
+bound to the same cohort/group keys and input identity. Agreement between two
+outputs that share the same mistaken formula is insufficient. Directional-cell
+checks alone do not verify these derived fields. For a confirmed complement
+count fault, require the same oracle to fail under that actual fault and pass
+after restoration; also cover a renderer that independently recomputes the
+wrong count instead of displaying the accepted summary.
+
+The synthetic [outcome report example](../assets/directional-metrics/outcomes.py)
+exports `summarize(rows)`, `render_summary(summary)` and `build_report(rows)`.
+Its small valid-input contract uses known truth `alpha`/`beta` and predictions
+`alpha`/`beta`/`None`; unknown truth is outside this example's domain. The summary
+has exactly `observations`, `correct`, `wrong`, `undecided`, and the HTML displays
+those four counts with their corresponding visible labels. The
+[retained regression](../scripts/test_evaluation_outcomes_example.py) checks
+literal cells, empty/mixed/zero-wrong cases, saved HTML and both complement-count
+faults through the same public assertions. Run it with:
+
+```text
+python3 -B -m unittest discover -s scripts -p test_evaluation_outcomes_example.py -v
+```
+
+This demonstrates acceptance coverage, not a repair of any archived report.
+Preserve earlier reviews and original outputs when a later audit finds a derived
+field defect; publish separately bound corrections within the task's authority.
+Correct per-sample predictions or descriptors do not make a wrong report field
+correct, and that field defect alone does not invalidate unrelated verified data.
+
 ## Public launcher identity example
 
 For example, a launcher may select a method from a frozen manifest, call an observer, then save a diagnostic. If that contract binds `object_id` and `station` to the method-specific case, the launcher's real `main` must compare the returned fields with that selected case before accepting the diagnostic or marking completion. Valid input/source/weight hashes establish byte identity; they do not establish that the returned observation belongs to the selected case. These field names are an example, not required fields for every project: use only the business identity and guard decisions fixed by the actual contract.

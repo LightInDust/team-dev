@@ -24,6 +24,25 @@ For example, a list of records containing a retained global index and a coordina
 
 ### Exact-export adapters over permissive helpers
 
+Configuration and plan files are producer interfaces too. Before an expensive
+operation, select a minimal sanitized instance from the actual plan variant and
+exercise its real parsing/validation path before model loading or other costly
+side effects. Preserve intentional field absence, empty collections, role/scope,
+and cross-file inventory ownership; record exactly what sanitization changed.
+For example, a source-only feature plan must not acquire a query inventory just
+to make a hand-built test fixture convenient. Bind any separately owned query
+inventory through its actual input contract. Do not weaken the real parser to
+accept a fabricated structure.
+
+Where the contract permits it, retain a regression that feeds this structure
+through the real public preparation path with the model/resource-loading seam
+trapped, proving parsing reaches the intended boundary without inference.
+Missing, unexpected and mismatched fields need the contract's actual outcomes;
+an unrelated earlier exception does not demonstrate the desired check. This
+structural preflight does not prove model execution, numeric accuracy or full
+production success. Use existing authorized input bytes or a documented minimal
+slice; never regenerate frozen experiments solely to obtain the fixture.
+
 When a new adapter requires a complete export from a particular producer/version, inspect the reused parser's accepted domain as well as its successful output. A legacy helper may intentionally accept missing diagnostics or several formats. Reusing it does not enforce the adapter's narrower contract: require the adapter's fields before delegation, while preserving the helper's legitimate callers and the accepted scoring/processing semantics.
 
 Resolve these distinctions from the applicable producer and task contract, not from one successful sample:
