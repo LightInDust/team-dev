@@ -109,31 +109,88 @@ false with a visible issue. Rows also report `gate_status`/`gate_decision`/
 `args_agree` (`unknown` when a side is absent — never assumed to agree),
 `log_dir`, `exit_code` (retained numeric file), `terminal_exit_code` (the
 result's own `exitCode`, kept `unknown` when the shape omits it or is
-non-integer), per-file log hashes, row `issues` and `binding_complete`.
+non-integer, and always `unknown` for any async-marked result), per-file log
+hashes, row `issues` and `binding_complete`.
 
 Any `details.async` key — the native `{jobId, type: bash, state}` shape or a
-malformed marker — and any legacy job-id key is retained as `unsupported`: no
-job is joined, no affirmative `executed` is recorded and the row stays
-incomplete.
+malformed marker — and any legacy job-id key triggers the structured async
+path described below instead of an immediate unsupported row.
+
+### Structured async delivery (ledger v2)
+
+The ledger document reports `ledger_version: 2`. When the private journal
+carries any async marker, the reader opens exactly two more fixed files with the
+same bounded no-follow reader: `metadata.json` (1 MiB) for the frozen
+`async_execution_policy` and `events.jsonl` (4 MiB, 32768 records) for the
+compact events. The policy must resolve to v2 through
+`async_evidence.protocol_version`; changed, partial or legacy markers stay
+unsupported. The whole-run private/compact join is delegated to
+`async_evidence.validate_binding(..., version=2)`, so the ledger never invents a
+second job-identity algorithm.
+
+A row is bound from async evidence only when all of these hold: the tool end is
+a native `queued`/`running` acknowledgement (`is_error` false, no `exitCode`
+key, no `WORKER_TEST_LOG_DIR=` line in the acknowledgement, no legacy job key),
+the delivered custom notice carries exactly one bash job with the same job ID,
+and the validated `(tool_call_id, generation)` pair matches the ordered compact
+notice. The single canonical marker is then read from the **notice** content
+(string or text blocks) with the same `_bound_log_dir`/`_read_log_dir` safety;
+the retained exit status comes from that directory's `exit-code` file, never
+from notice prose. Rows report `result_source: async-notice` and an
+`async_binding` carrying `job_id`, `generation`, the acknowledgement
+`ack_state`, the original result `result_sha256` and the notice
+`notice_sha256`. `terminal_exit_code` stays `unknown` because an acknowledgement
+is not a synchronous terminal result.
+
+A native acknowledgement carrying any `exitCode` key — `0`, `7`, `true`,
+`null`, a string or any other value — contradicts the supported queued/running
+shape and stays `unsupported` with the fixed reason
+`async_ack_exit_code_unsupported`; it is never treated as a retained completed
+test exit. Independently of the join, no async-marked result (joined,
+unsupported, malformed or legacy) ever populates `terminal_exit_code`, while a
+genuinely synchronous numeric `exitCode` keeps its existing behaviour.
+
+Serial reuse of one job ID after delivery is supported through the existing
+validator, so two generations can bind distinct logs. Multi-job notice packets,
+legacy/markerless runs, malformed async shapes, inline terminal async states,
+premature reuse, stale replays, duplicate notices, missing notices,
+private/compact order or hash mismatches and contradictory ACK markers stay
+`unsupported`/`unknown`: no job is joined, the row keeps `executed: unknown`
+and the ledger stays incomplete. Any unusable metadata/event row (missing,
+truncated, symlinked, oversized, over the record bound, duplicate keys or a
+non-object) makes the whole async mapping unavailable; the ledger never
+truncates and binds partial evidence. Required-journal faults detected before
+the join — a blank, truncated or over-limit tool/gate row, an unsupported tool
+envelope version, a gate lockout or a duplicate decision — also make the async
+mapping unavailable (`async_inputs_incomplete`) instead of leaving a supported
+join over partially parsed input. `async` in the document reports the join
+`state`, `protocol_version`, a bounded `reason` token and `joined_jobs`.
+
+An async binding is provenance, not success: a retained nonzero `exit_code` is
+evidence-complete and can make `executed: true`, but it is not a pass; the
+acknowledgement's `is_error` never certifies the test outcome, and the ledger
+never synthesizes a synchronous terminal result, resource cleanup or worker
+acceptance.
 
 Reading is bounded and narrow: only `task.json`, `tool-evidence.jsonl`,
-`bash-gate-events.jsonl` and the three files inside one canonical
-`worker-test-logs/check-[A-Za-z0-9]{1,64}` directory. JSONL files are capped at
-4 MiB, 2048 records and 128 invocation IDs; log files at 4 MiB and `exit-code`
-at 64 bytes. A log directory is bound only from a single exact
-`WORKER_TEST_LOG_DIR=` line whose parent resolves to the run's own
-`worker-test-logs`; multiple markers, traversal, other-run and outside paths are
-rejected before anything is opened, and both directory levels are opened with
-no-follow descriptors, so a symlinked parent, a symlinked leaf, a FIFO or an
-oversized file is reported (`symlink`, `nonregular`, `oversized`) instead of
-being followed, read or wholly allocated.
+`bash-gate-events.jsonl`, `metadata.json` and `events.jsonl` (the last two only
+when the private journal shows async presence), plus the three files inside one
+canonical `worker-test-logs/check-[A-Za-z0-9]{1,64}` directory. JSONL journals
+are capped at 4 MiB, 2048 records and 128 invocation IDs; compact events at
+4 MiB and 32768 records; log files at 4 MiB and `exit-code` at 64 bytes. A log
+directory is bound only from a single exact `WORKER_TEST_LOG_DIR=` line whose
+parent resolves to the run's own `worker-test-logs`; multiple markers,
+traversal, other-run and outside paths are rejected before anything is opened,
+and both directory levels are opened with no-follow descriptors, so a symlinked
+parent, a symlinked leaf, a FIFO or an oversized file is reported (`symlink`,
+`nonregular`, `oversized`) instead of being followed, read or wholly allocated.
 
 Use the ledger as the coordinator's invocation table: tri-state `executed`
 (`invocations` counts explicit `true` only, `observed_starts` reports the
 retained starts), the tool-journal ordering with `unknown` cross-journal
 chronology, which attempts were denied and never executed, which started
-without a terminal result, duplicates/orphans/conflicts, async shapes that
-remain unsupported, and the retained exit status per attempt. Then, per the
+without a terminal result, duplicates/orphans/conflicts, async rows that fail
+the structured v2 join, and the retained exit status per attempt. Then, per the
 existing report rules:
 
 - **Preserve the original worker report** and append corrections, unknowns and
@@ -204,9 +261,11 @@ a conflict, while an absent legacy digest stays explicit `unknown` plus a
 visible gap. Every parsed manifest/evidence JSON also rejects non-finite numbers
 (`NaN`, `Infinity`, overflowing exponents) as invalid, so no public result ever
 carries a value that `json.dumps(..., allow_nan=False)` cannot emit.
-Credentials, `invocation.json`, session files, `events.jsonl`, live processes and
-recursively found files are never opened by any subcommand, and `invocations`
-reads the narrower allowlist above and never a worker narrative or
+Credentials, `invocation.json`, session files, live processes and
+recursively found files are never opened by any subcommand. `events.jsonl` is
+read only by `invocations`, only when the private journal shows async presence,
+and only through the bounded compact-event reader; `invocations` reads the
+narrower allowlist above and never a worker narrative or
 `worker-result.json`. `worker-result.json` is exposed as a pointer plus hash only
 — the worker's final report is not authoritative output. Absent optional workflow
 evidence (proposal/applied/tests/review) is a visible gap, and a gap keeps the

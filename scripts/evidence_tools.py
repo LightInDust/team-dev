@@ -25,6 +25,8 @@ import re
 import stat
 import tempfile
 
+import invocation_async
+
 JSON_LIMIT = 1024 * 1024
 BLOB_LIMIT = 4 * 1024 * 1024
 MAX_RUNS = 16
@@ -556,9 +558,12 @@ def review_package(run_path):
 
 # --- Read-only invocation ledger -------------------------------------------
 
+LEDGER_VERSION = 2
 LEDGER_JSONL_LIMIT = 4 * 1024 * 1024
 LEDGER_MAX_RECORDS = 2048
 LEDGER_MAX_INVOCATIONS = 128
+LEDGER_EVENTS_LIMIT = 4 * 1024 * 1024
+LEDGER_EVENTS_MAX_RECORDS = 32768
 EXIT_CODE_LIMIT = 64
 LEDGER_JOURNALS = ('tool-evidence.jsonl', 'bash-gate-events.jsonl')
 LOG_DIR_PARENT = 'worker-test-logs'
@@ -624,36 +629,41 @@ def _allowed_commands(task):
     return frozenset(value.lower() for value in values), 'present'
 
 
-def _jsonl(path, issues):
+def _jsonl_records(raw, name, issues, max_records):
+    """Parse bounded JSONL bytes; every unusable record stays a visible issue."""
+    if raw and not raw.endswith(b'\n'):
+        issues.append(_issue('evidence', name + ': final record is incomplete', severity='gap'))
+    lines = raw.splitlines()
+    if len(lines) > max_records:
+        issues.append(_issue('limit', name + ': more than %d records' % max_records))
+        lines = lines[:max_records]
+    documents = []
+    for line in lines:
+        if not line.strip():
+            issues.append(_issue('evidence', name + ': blank record', severity='gap'))
+            continue
+        if len(line) > JSON_LIMIT:
+            issues.append(_issue('limit', name + ': record exceeds the fixed record bound'))
+            continue
+        try:
+            item = _strict_json(line)
+        except (ValueError, RecursionError):
+            issues.append(_issue('evidence', name + ': record is not valid strict JSON'))
+            continue
+        if not isinstance(item, dict):
+            issues.append(_issue('evidence', name + ': record is not a JSON object'))
+            continue
+        documents.append(item)
+    return documents
+
+
+def _jsonl(path, issues, max_records=LEDGER_MAX_RECORDS):
     """Read one bounded JSONL journal; every unusable record stays a visible issue."""
     raw, problem = _read_bytes(path, LEDGER_JSONL_LIMIT)
     if problem is not None:
         issues.append(_issue('evidence', path.name + ': ' + problem, severity='gap'))
         return None, []
-    if raw and not raw.endswith(b'\n'):
-        issues.append(_issue('evidence', path.name + ': final record is incomplete', severity='gap'))
-    lines = raw.splitlines()
-    if len(lines) > LEDGER_MAX_RECORDS:
-        issues.append(_issue('limit', path.name + ': more than %d records' % LEDGER_MAX_RECORDS))
-        lines = lines[:LEDGER_MAX_RECORDS]
-    documents = []
-    for line in lines:
-        if not line.strip():
-            issues.append(_issue('evidence', path.name + ': blank record', severity='gap'))
-            continue
-        if len(line) > JSON_LIMIT:
-            issues.append(_issue('limit', path.name + ': record exceeds the fixed record bound'))
-            continue
-        try:
-            item = _strict_json(line)
-        except (ValueError, RecursionError):
-            issues.append(_issue('evidence', path.name + ': record is not valid strict JSON'))
-            continue
-        if not isinstance(item, dict):
-            issues.append(_issue('evidence', path.name + ': record is not a JSON object'))
-            continue
-        documents.append(item)
-    return raw, documents
+    return raw, _jsonl_records(raw, path.name, issues, max_records)
 
 
 def _markers(result):
@@ -763,6 +773,66 @@ def _read_log_dir(run, log_dir):
     return files, exit_code, issues
 
 
+def _async_document(run, sources):
+    """Bounded no-follow metadata read for the frozen async policy."""
+    record = {'file': 'metadata.json', 'status': 'read', 'sha256': None, 'bytes': None}
+    raw, problem = _read_bytes(run / 'metadata.json', JSON_LIMIT)
+    if problem is not None:
+        record['status'] = problem
+        sources.append(record)
+        return None, problem
+    record['sha256'], record['bytes'] = _digest(raw), len(raw)
+    try:
+        value = _strict_json(raw)
+    except (ValueError, RecursionError):
+        value = None
+    if not isinstance(value, dict):
+        record['status'] = 'invalid'
+        sources.append(record)
+        return None, 'not a strict JSON object'
+    sources.append(record)
+    return value, None
+
+
+def _async_events(run, sources, issues):
+    """Bounded no-follow compact event read; any unusable row leaves the join unavailable."""
+    record = {'file': 'events.jsonl', 'status': 'read', 'sha256': None, 'bytes': None}
+    local = []
+    raw, problem = _read_bytes(run / 'events.jsonl', LEDGER_EVENTS_LIMIT)
+    if problem is not None:
+        record['status'] = problem
+        local.append(_issue('evidence', 'events.jsonl: ' + problem, severity='gap'))
+        documents = None
+    else:
+        record['sha256'], record['bytes'] = _digest(raw), len(raw)
+        documents = _jsonl_records(raw, 'events.jsonl', local, LEDGER_EVENTS_MAX_RECORDS)
+    sources.append(record)
+    if local:
+        issues.extend(local)
+        return None
+    return documents
+
+
+def _async_join(run, task_doc, tools, sources, issues):
+    """Read only the fixed async allowlist and join one structured v2 delivery."""
+    metadata, problem = _async_document(run, sources)
+    if problem is not None:
+        issues.append(_issue('async', 'metadata.json: ' + problem))
+        return invocation_async.unsupported('async_metadata_unavailable')
+    events = _async_events(run, sources, issues)
+    if events is None:
+        issues.append(_issue('async', 'events.jsonl is unavailable for the async join'))
+        return invocation_async.unsupported('async_compact_events_unavailable')
+    version, problem = invocation_async.protocol(task_doc, metadata)
+    if problem is not None:
+        issues.append(_issue('async', 'async execution policy is unsupported'))
+        return invocation_async.unsupported(problem)
+    result = invocation_async.join(tools, events, version)
+    if result['state'] != 'supported':
+        issues.append(_issue('async', 'async delivery is unsupported: ' + result['reason']))
+    return result
+
+
 def _async_result(result):
     """Any details.async marker (native or malformed) or legacy job key stays unsupported."""
     details = result.get('details') if isinstance(result, dict) else None
@@ -770,7 +840,7 @@ def _async_result(result):
         return False
     if 'async' in details:
         return True
-    return any(details.get(key) is not None for key in ASYNC_JOB_KEYS)
+    return any(key in details for key in ASYNC_JOB_KEYS)
 
 
 def _gate_shape(decision, journal_present, local, max_denials):
@@ -817,12 +887,14 @@ def _row_binding_complete(row):
                 all(record['status'] == 'read' for record in row['logs'].values()))
 
 
-def _ledger_document(run, sources, rows, issues, policy_state, allowed_count, ready=False):
+def _ledger_document(run, sources, rows, issues, policy_state, allowed_count, ready=False,
+                     async_state=None):
+    async_state = async_state or {'state': 'absent', 'reason': None, 'version': None}
     complete = (bool(rows) and all(row['binding_complete'] for row in rows) and
                 not any(issue['severity'] in ('error', 'gap') for issue in issues))
     return {
         'tool': 'evidence_tools.invocation_ledger',
-        'ledger_version': 1,
+        'ledger_version': LEDGER_VERSION,
         'run': str(run),
         'label': ('stored evidence only: not a current execution attestation, not test success and '
                   'not acceptance'),
@@ -833,9 +905,15 @@ def _ledger_document(run, sources, rows, issues, policy_state, allowed_count, re
                                    'tool journal end order for rows with no start record'),
                      'cross_journal_chronology': UNKNOWN},
         'gate_ready': ready,
+        'async': {'state': async_state['state'],
+                  'protocol_version': async_state.get('version'),
+                  'reason': async_state.get('reason'),
+                  'joined_jobs': sum(1 for row in rows if row['async_binding'] is not None)},
         'limits': {'jsonl_bytes': LEDGER_JSONL_LIMIT, 'records_per_file': LEDGER_MAX_RECORDS,
                    'invocation_ids': LEDGER_MAX_INVOCATIONS, 'log_bytes': BLOB_LIMIT,
-                   'exit_code_bytes': EXIT_CODE_LIMIT},
+                   'exit_code_bytes': EXIT_CODE_LIMIT,
+                   'async_events_bytes': LEDGER_EVENTS_LIMIT,
+                   'async_events_records': LEDGER_EVENTS_MAX_RECORDS},
         'sources': sources,
         'invocations': sum(1 for row in rows if row['executed'] is True),
         'observed_starts': sum(1 for row in rows if row['start_present'] is True),
@@ -886,8 +964,12 @@ def invocation_ledger(run_path):
                                        'command matching stays unknown', severity='gap'))
 
     journals = {}
+    input_faults = False
     for name in LEDGER_JOURNALS:
+        mark = len(issues)
         raw, documents = _jsonl(run / name, issues)
+        if len(issues) > mark:
+            input_faults = True
         journals[name] = documents
         sources.append({'file': name, 'status': 'read' if raw is not None else 'missing',
                         'sha256': _digest(raw) if raw is not None else None,
@@ -909,23 +991,27 @@ def invocation_ledger(run_path):
         if type(envelope) is not int or envelope != 1:
             issues.append(_issue('unsupported', 'tool evidence record with an unsupported envelope '
                                                 'version is retained as unsupported'))
+            input_faults = True
             continue
         if kind in GATE_LOCKOUTS:
             issues.append(_issue('unsupported', 'gate lockout record is retained as unsupported'))
+            input_faults = True
             continue
         if kind == 'async_result':
-            issues.append(_issue('unsupported', 'async result packet is retained as unsupported; '
-                                                'no job is joined'))
+            # Retained privately for the v2 join; a packet never becomes a ledger row.
             continue
         if kind not in (TOOL_START, TOOL_END):
             issues.append(_issue('unsupported', 'unsupported tool evidence record type: ' + _token(kind)))
+            input_faults = True
             continue
         if not isinstance(ident, str) or not ident:
             issues.append(_issue('record', 'tool evidence record without a usable call ID'))
+            input_faults = True
             continue
         target = starts if kind == TOOL_START else ends
         if ident in target:
             note(ident, 'duplicate', 'duplicate ' + kind + ' record for one call ID')
+            input_faults = True
             continue
         target[ident] = item
         if kind == TOOL_START and isinstance(item.get('args'), dict):
@@ -940,12 +1026,15 @@ def invocation_ledger(run_path):
             continue
         if kind != 'decision':
             issues.append(_issue('unsupported', 'unsupported gate record type: ' + _token(kind)))
+            input_faults = True
             continue
         if not isinstance(ident, str) or not ident:
             issues.append(_issue('record', 'gate record without a usable call ID'))
+            input_faults = True
             continue
         if ident in decisions:
             note(ident, 'duplicate', 'duplicate gate decision for one call ID')
+            input_faults = True
             continue
         decisions[ident] = item
 
@@ -956,7 +1045,24 @@ def invocation_ledger(run_path):
     if len(order) > LEDGER_MAX_INVOCATIONS:
         issues.append(_issue('limit', 'more than %d invocation IDs; only the first set is retained'
                              % LEDGER_MAX_INVOCATIONS))
+        input_faults = True
         order = order[:LEDGER_MAX_INVOCATIONS]
+
+    async_state = {'state': 'absent', 'reason': None, 'version': None}
+    async_jobs = {}
+    if invocation_async.presence(tool_records):
+        if input_faults:
+            issues.append(_issue('async', 'required journal evidence is incomplete for the async join'))
+            issues.append(_issue('unsupported', 'async delivery evidence is retained as unsupported; '
+                                                'no job is joined'))
+            async_state = invocation_async.unsupported('async_inputs_incomplete')
+        else:
+            async_state = _async_join(run, task_doc, tool_records, sources, issues)
+            if async_state['state'] == 'supported':
+                async_jobs = {job['tool_call_id']: job for job in async_state['jobs']}
+            else:
+                issues.append(_issue('unsupported', 'async delivery evidence is retained as '
+                                                    'unsupported; no job is joined'))
 
     rows = []
     for position, (ident, order_basis) in enumerate(order):
@@ -1010,11 +1116,20 @@ def invocation_ledger(run_path):
         if end is not None and type(recorded_error) is not bool:
             local.append(_issue('record', 'terminal result is_error is missing or not a boolean'))
             recorded_error = UNKNOWN
+        job = async_jobs.get(ident)
         log_dir, log_status = None, 'absent'
         if terminal_present:
             if gate_decision == 'block':
                 if _markers(result):
                     local.append(_issue('conflict', 'blocked request carries a test log marker'))
+            elif job is not None:
+                log_dir, marker_issue = _bound_log_dir({'content': job['content']}, run)
+                if marker_issue is not None:
+                    log_status = 'invalid'
+                    local.append(marker_issue)
+                elif log_dir is None:
+                    local.append(_issue('log', 'async notification carries no canonical '
+                                               'WORKER_TEST_LOG_DIR marker'))
             else:
                 log_dir, marker_issue = _bound_log_dir(result, run)
                 if marker_issue is not None:
@@ -1023,14 +1138,18 @@ def invocation_ledger(run_path):
                 elif log_dir is None:
                     local.append(_issue('log', 'terminal result carries no canonical '
                                                'WORKER_TEST_LOG_DIR marker'))
-            if _async_result(result):
+            if job is None and _async_result(result):
                 local.append(_issue('unsupported', 'terminal result reports a background job; retained '
                                                    'as unsupported and no job is joined'))
         details = result.get('details') if terminal_present else None
         if terminal_present and not isinstance(details, dict):
             local.append(_issue('record', 'terminal result details is missing or not a JSON object'))
         recorded_exit = details.get('exitCode') if isinstance(details, dict) else None
-        if not isinstance(details, dict) or 'exitCode' not in details:
+        if terminal_present and (job is not None or _async_result(result)):
+            # An async acknowledgement (joined, unsupported, malformed or legacy) is
+            # never a synchronous terminal result: its exitCode is not provenance.
+            terminal_exit_code = UNKNOWN
+        elif not isinstance(details, dict) or 'exitCode' not in details:
             terminal_exit_code = UNKNOWN
         elif type(recorded_exit) is int:
             terminal_exit_code = recorded_exit
@@ -1053,6 +1172,13 @@ def invocation_ledger(run_path):
             'start_present': start is not None,
             'end_present': end is not None,
             'terminal_result_present': terminal_present,
+            'result_source': ('async-notice' if job is not None else
+                              'terminal' if terminal_present else 'absent'),
+            'async_binding': ({'job_id': job['job_id'], 'generation': job['generation'],
+                               'ack_state': job['ack_state'],
+                               'result_sha256': job['result_sha256'],
+                               'notice_sha256': job['notice_sha256']}
+                              if job is not None else None),
             'recorded_is_error': recorded_error,
             'command_sha256': command_hash,
             'policy_command_sha256': policy_hash,
@@ -1093,7 +1219,7 @@ def invocation_ledger(run_path):
             issues.append(_issue('command', 'bound allowed request command is not one of the frozen '
                                             'allowed command hashes'))
     return _ledger_document(run, sources, rows, issues, policy_state,
-                            len(allowed) if allowed is not None else 0, ready)
+                            len(allowed) if allowed is not None else 0, ready, async_state)
 
 
 def _reject_output(output, forbidden):

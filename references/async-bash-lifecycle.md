@@ -26,6 +26,45 @@ All scratch producers and consumers must finish within their owned temporary con
 
 Use event timestamps for ordering, and separate the time an observation was made from the time a steer message was delivered. A queued message saying a process was running can arrive after an interrupt-result notification. Preserve corrections as addenda without deleting the earlier assertion or attributing a coordinator signal to the CLI automatically.
 
+## Ledger join (read-only, evidence_tools invocations v2)
+
+`evidence_tools.py invocations` reports `ledger_version: 2`. When the private
+`tool-evidence.jsonl` carries any async marker it additionally reads, through the
+same bounded no-follow reader, `metadata.json` (1 MiB) and `events.jsonl`
+(4 MiB, 32768 records). Nothing else is opened, and the ledger starts no process.
+
+The join reuses `async_evidence.protocol_version(task, metadata)` (must be v2)
+and `async_evidence.validate_binding(events, tools, version=2)`; it has no
+separate job-identity algorithm. A row is bound only for a native
+`queued`/`running` acknowledgement (`is_error` false, no marker, no legacy job
+key) followed by a delivered custom notice with exactly one bash job of the same
+identity. The single canonical `WORKER_TEST_LOG_DIR=` marker is read from the
+notice content (string or text blocks), not from the acknowledgement, and the
+retained `exit-code` file supplies the numeric status. Rows expose
+`result_source: async-notice` and `async_binding` with `job_id`, `generation`,
+the acknowledgement `ack_state`, the original result `result_sha256` and the
+notice `notice_sha256`; `terminal_exit_code` remains `unknown` because an
+acknowledgement is not a synchronous terminal result.
+
+Serial reuse of one job ID after delivery binds distinct generations and logs.
+Multi-job packets, legacy/markerless runs, malformed shapes, inline terminal
+states, premature reuse, stale replay, duplicate/missing notices, private or
+compact order/hash mismatch and contradictory ACK markers stay
+`unsupported`/`unknown` and keep the ledger incomplete. Any missing, truncated,
+symlinked, oversized, over-limit or duplicate-key metadata/event evidence makes
+the whole async mapping unavailable; partial evidence is never bound.
+Required-journal faults found before the join — blank/truncated/over-limit
+tool or gate rows, an unsupported tool envelope version, a gate lockout or a
+duplicate decision — likewise yield `async_inputs_incomplete`, so a supported
+join never rests on partially parsed input.
+
+The ledger binds stored provenance only. It does not establish that the test
+passed (a retained nonzero exit is still evidence-complete), that the child
+exited, that scratch was removed or that the worker attempt is accepted.
+`acceptance_certified`, `current_target_verified` and `current_liveness_verified`
+stay false; independent reinspection is new evidence, and historical ledger
+bytes or failed runs are never rewritten.
+
 ## Ordinary Sol review, with per-job evidence
 
 Obtain the final `process-evidence --run` binding after target tests. For every item of `binding.async_execution.jobs`, Astra writes a scoped JSON observation receipt inside the run's authorized evidence area. No extra model stage is added. Sol reads the actual command, complete available async packet, target test evidence, receipt and any contradictory worker claims.
