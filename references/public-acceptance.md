@@ -7,6 +7,7 @@ Before delegation, put a compact coverage table in the existing `acceptance` fie
 | Requirement | Public path and owner | Observable oracle | Declared check and fault case |
 | --- | --- | --- | --- |
 | Input identity must match a frozen reference | Actual loader/CLI validator | Independently pinned expected identity | Listed test changes the supplied identity; public call must reject |
+| Input roles obey distinct path/name contracts | Actual per-role resolver or public input preflight | Literal role-to-relative-path examples derived independently from the contract | Canonical-only acceptance and wrong-prefix/alias-only rejection; separately scope the [authorized real-input path check](producer-consumer-contract.md#path-and-filename-contracts) |
 | Output belongs to the selected business case | Actual launcher/API entrypoint before accepting output or recording success | Expected business identity from the frozen case selected by this invocation | Supply an otherwise valid result for another case through the real entrypoint; reject it for the identity mismatch |
 | Required state survives serialization | Actual export/serializer, then its consumer if relevant | Exact keys, values and permitted null/missing cases from the contract | Listed test checks real output with a mixed valid/invalid fixture |
 | Required annotation stays in its permitted region | Checker actually called by export | Saved/rendered bounds after final layout | Listed test moves a required annotation out of bounds; actual gate must reject |
