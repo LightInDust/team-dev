@@ -49,6 +49,12 @@ STREAM_ERROR_KINDS = frozenset({
     'connection_timeout',
 })
 
+LOOP_GUARD_ERROR_KIND = 'thinking_loop_guard_reported'
+# Anchored saved-text label from OMP's loop guard after optional leading whitespace.
+# A mention later in prose, a quote, a negation or a lookalike suffix stays unclassified.
+LOOP_GUARD_RE = re.compile(r'\A\s*thinking loop detected(?=\s*(?:$|[:.]))',
+                           re.IGNORECASE)
+
 
 def http_error_status(value):
     """Recognize a leading status in saved error text, not an authenticated response."""
@@ -79,6 +85,8 @@ def error_kind(value):
         if status == 408:
             return 'http_request_timeout'
         return 'http_server_error' if status >= 500 else 'http_client_error'
+    if LOOP_GUARD_RE.match(value):
+        return LOOP_GUARD_ERROR_KIND
     for fragment, kind in (
         ('closed before a finish_reason', 'stream_closed_before_finish_reason'),
         ('stalled while waiting for the next event', 'stream_idle_timeout'),
@@ -194,6 +202,7 @@ def diagnose_run(run):
             blockers.append('terminal_agent_end_missing')
     stream_faults = sum(v for k, v in kinds.items() if k in STREAM_ERROR_KINDS)
     http_faults = sum(http_statuses.values())
+    loop_guard_faults = kinds.get(LOOP_GUARD_ERROR_KIND, 0)
     if http_faults and (stream_faults or rpc_faults):
         assessment = 'model_http_and_transport_faults_observed'
     elif http_faults:
@@ -204,6 +213,8 @@ def diagnose_run(run):
         assessment = 'model_stream_faults_observed'
     elif rpc_faults:
         assessment = 'rpc_client_faults_observed'
+    elif loop_guard_faults:
+        assessment = 'thinking_loop_guard_reported'
     elif errors:
         assessment = 'unclassified_model_errors_observed'
     elif stop == 'worker_evidence_invalid':
@@ -242,6 +253,16 @@ def diagnose_run(run):
             reported_condition=access['billing_observation'],
             same_endpoint_retry='defer_pending_billing_resolution_evidence',
             configuration_change_authorized=False)
+    loop_guard_guidance = None if not loop_guard_faults else {
+        'basis': 'saved_error_text',
+        'trigger_origin_verified': False,
+        'detection_accuracy': 'unknown',
+        'root_cause': 'unknown',
+        'network_provider_root_cause': 'unknown',
+        'automatic_retry_authorized': False,
+        'configuration_change_authorized': False,
+        'next_step': 'inspect_preserved_candidate_and_guard_evidence',
+    }
     return {
         'diagnostic_version': 2,
         'startup': startup,
@@ -261,6 +282,8 @@ def diagnose_run(run):
         'model_error_count': len(errors), 'model_error_kinds': kinds,
         'model_http_error_count': http_faults, 'model_http_status_counts': http_statuses,
         'model_stream_fault_count': stream_faults,
+        'model_loop_guard_error_count': loop_guard_faults,
+        'loop_guard_guidance': loop_guard_guidance,
         'request_failure_guidance': request_guidance,
         'rpc_client_fault_count': rpc_faults, 'worker_evidence_blockers': blockers,
         'final_text_state': ('missing' if 'final_text' not in result else

@@ -452,6 +452,144 @@ class DiagnosticsTests(unittest.TestCase):
         self.write('progress.json', {'changed_paths': ['PRIVATE']})
         self.assertEqual(self.diagnose()['recovery']['next_step'], 'inspect_run_state')
 
+    def test_saved_thinking_loop_guard_is_reported_without_erasing_failure(self):
+        self.write('metadata.json', {'process': 'failed', 'delivery': 'worker_failed',
+            'exit_code': 0, 'worker_bash_gate': {'version': 2}, 'attempt': 2})
+        self.write('progress.json', {'changed_paths': ['PRIVATE-a'], 'first_write_at': 10,
+                                     'stream_chars': {'thinking': 120},
+                                     'tool_counts': {'write': 1}})
+        self.result.update(errors=['Thinking loop detected: PRIVATE repeated reasoning'],
+                           tools=['write'], final_text='PRIVATE candidate saved; tests not run')
+        result = self.diagnose()
+        self.assertEqual(result['diagnostic_version'], 2)
+        self.assertEqual(result['assessment'], 'thinking_loop_guard_reported')
+        self.assertEqual(result['model_error_count'], 1)
+        self.assertEqual(result['model_error_kinds'], {'thinking_loop_guard_reported': 1})
+        self.assertEqual(result['model_loop_guard_error_count'], 1)
+        self.assertEqual(result['loop_guard_guidance'], {
+            'basis': 'saved_error_text', 'trigger_origin_verified': False,
+            'detection_accuracy': 'unknown', 'root_cause': 'unknown',
+            'network_provider_root_cause': 'unknown',
+            'automatic_retry_authorized': False, 'configuration_change_authorized': False,
+            'next_step': 'inspect_preserved_candidate_and_guard_evidence'})
+        self.assertEqual(result['model_http_error_count'], 0)
+        self.assertEqual(result['model_stream_fault_count'], 0)
+        self.assertEqual(result['rpc_client_fault_count'], 0)
+        self.assertEqual(result['worker_evidence_blockers'], ['model_errors_present'])
+        self.assertEqual(result['stop_reason'], 'worker_evidence_invalid')
+        self.assertTrue(result['terminal_agent_end'])
+        self.assertEqual(result['output_observation'], 'recorded_changes_and_final_text')
+        self.assertEqual(result['recovery'], {'same_run_resume': 'prohibited_by_gate_policy',
+            'next_step': 'inspect_preserved_candidate_for_independent_takeover',
+            'saved_attempt': 2, 'eligibility_checked': False})
+        self.assertEqual(result['auto_retry_events'], {'auto_retry_start': 1, 'auto_retry_end': 1})
+        self.assertNotIn('PRIVATE', json.dumps(result))
+
+    def test_loop_guard_without_candidate_keeps_unknown_recovery(self):
+        for paths in ([], None):
+            with self.subTest(paths=paths):
+                self.write('metadata.json', {'process': 'failed', 'worker_bash_gate': {'version': 2}})
+                self.write('progress.json', {'changed_paths': paths})
+                self.result['errors'] = ['  THINKING LOOP DETECTED.']
+                result = self.diagnose()
+                self.assertEqual(result['assessment'], 'thinking_loop_guard_reported')
+                self.assertEqual(result['model_loop_guard_error_count'], 1)
+                self.assertEqual(result['loop_guard_guidance']['next_step'],
+                                 'inspect_preserved_candidate_and_guard_evidence')
+                self.assertEqual(result['recovery']['next_step'],
+                                 'inspect_evidence_then_fresh_preparation')
+                self.assertEqual(result['worker_evidence_blockers'],
+                                 ['model_errors_present', 'final_text_missing'])
+                self.assertNotIn('PRIVATE', json.dumps(result))
+        self.write('progress.json', {'changed_paths': []})
+        self.result['errors'] = []
+        result = self.diagnose()
+        self.assertEqual(result['model_loop_guard_error_count'], 0)
+        self.assertIsNone(result['loop_guard_guidance'])
+
+    def test_loop_guard_keeps_higher_priority_http_stream_and_rpc_assessments(self):
+        cases = [
+            (['Thinking loop detected: PRIVATE', '503 PRIVATE'], [],
+             'model_http_errors_observed'),
+            (['Thinking loop detected: PRIVATE',
+              'The socket connection was closed unexpectedly PRIVATE'], [],
+             'model_stream_faults_observed'),
+            (['Thinking loop detected: PRIVATE'], [{'reason': 'listener_error'}],
+             'rpc_client_faults_observed'),
+            (['Thinking loop detected: PRIVATE',
+              'The socket connection was closed unexpectedly PRIVATE'],
+             [{'reason': 'listener_error'}], 'model_stream_and_rpc_faults_observed'),
+            (['Thinking loop detected: PRIVATE', '404 Endpoint is unavailable PRIVATE'], [],
+             'model_http_errors_observed'),
+            (['Thinking loop detected: PRIVATE', 'PRIVATE_UNKNOWN'], [],
+             'thinking_loop_guard_reported'),
+        ]
+        for errors, client_errors, assessment in cases:
+            with self.subTest(assessment=assessment, errors=errors):
+                self.result['errors'] = errors
+                self.result['client_errors'] = client_errors
+                result = self.diagnose()
+                self.assertEqual(result['assessment'], assessment)
+                self.assertEqual(result['model_loop_guard_error_count'], 1)
+                self.assertEqual(result['model_error_kinds']['thinking_loop_guard_reported'], 1)
+                self.assertEqual(result['model_error_count'], len(errors))
+                self.assertEqual(result['worker_evidence_blockers'],
+                                 ['model_errors_present', 'final_text_missing'])
+                self.assertEqual(result['loop_guard_guidance']['automatic_retry_authorized'], False)
+                self.assertNotIn('PRIVATE', json.dumps(result))
+
+    def test_leading_http_body_mentioning_loop_guard_is_not_a_guard_report(self):
+        for raw, kind in [('503 Thinking loop detected: PRIVATE', 'http_server_error'),
+                          ('HTTP/1.1 503 Thinking loop detected: PRIVATE', 'http_server_error'),
+                          ('Error code: 500 Thinking loop detected PRIVATE', 'http_server_error')]:
+            with self.subTest(raw=raw):
+                self.assertEqual(error_kind(raw), kind)
+                self.result['errors'] = [raw]
+                result = self.diagnose()
+                self.assertEqual(result['model_error_kinds'], {kind: 1})
+                self.assertEqual(result['model_loop_guard_error_count'], 0)
+                self.assertIsNone(result['loop_guard_guidance'])
+                self.assertEqual(result['assessment'], 'model_http_errors_observed')
+                self.assertNotIn('PRIVATE', json.dumps(result))
+
+    def test_loop_guard_classification_is_anchored_and_bounded(self):
+        for raw, kind in [
+                ('Thinking loop detected', 'thinking_loop_guard_reported'),
+                ('thinking loop detected: repeated block PRIVATE', 'thinking_loop_guard_reported'),
+                ('  Thinking loop detected.', 'thinking_loop_guard_reported'),
+                ('Error: Thinking loop detected: repeated block PRIVATE', 'unclassified'),
+                ('Error: Thinking loop detected', 'unclassified'),
+                ('ERROR: THINKING LOOP DETECTED.', 'unclassified'),
+                ('PRIVATE: Thinking loop detected', 'unclassified'),
+                ('The provider reported "Thinking loop detected" PRIVATE', 'unclassified'),
+                ('"Thinking loop detected" PRIVATE', 'unclassified'),
+                ('Not a thinking loop detected PRIVATE', 'unclassified'),
+                ('Thinking loop detection failed PRIVATE', 'unclassified'),
+                ('Thinking loop detectedX PRIVATE', 'unclassified'),
+                ('Thinking loop detected elsewhere PRIVATE', 'unclassified'),
+                ('Thinking loops detected PRIVATE', 'unclassified'),
+                ('Thinking loop guard disabled PRIVATE', 'unclassified'),
+                (None, 'unclassified'), (True, 'unclassified'), (503, 'unclassified'),
+                ({'message': 'Thinking loop detected PRIVATE'}, 'unclassified'),
+                (['Thinking loop detected'], 'unclassified')]:
+            with self.subTest(kind=kind, value_type=type(raw).__name__):
+                self.assertEqual(error_kind(raw), kind)
+                self.result['errors'] = [raw]
+                result = self.diagnose()
+                self.assertEqual(result['model_loop_guard_error_count'],
+                                 int(kind == 'thinking_loop_guard_reported'))
+                self.assertEqual(result['loop_guard_guidance'] is None,
+                                 kind != 'thinking_loop_guard_reported')
+                self.assertNotIn('PRIVATE', json.dumps(result))
+                self.assertNotIn('Thinking loop', json.dumps(result))
+
+    def test_loop_guard_absent_by_default_and_diagnosis_writes_nothing(self):
+        result = self.diagnose()
+        self.assertEqual(result['model_loop_guard_error_count'], 0)
+        self.assertIsNone(result['loop_guard_guidance'])
+        self.assertNotEqual(result['assessment'], 'thinking_loop_guard_reported')
+        self.assertEqual(result['auto_retry_events'], {'auto_retry_start': 1, 'auto_retry_end': 1})
+
 
 if __name__ == '__main__':
     unittest.main()
