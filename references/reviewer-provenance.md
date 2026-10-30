@@ -90,7 +90,7 @@ for `team_dev.py record-review`, give the reviewer these exact fields and source
 | Top-level `fingerprint` | `applied.json.fingerprint`; it must agree with `metadata.json.applied_fingerprint` and the current target-test `tests.json.fingerprint`. Supply the actual value, never a placeholder. |
 | `model`, `effort`, full `reviewer_provenance` | Validated `review_handoff.py template` output from the actual accepted dispatch. |
 | `verdict`, findings and limits | The reviewer's independent judgment; metadata generation supplies no PASS. |
-| Full `process_review.binding` and its assessment | The complete current `process-evidence` object and review of actual commands/results, including prevented requests and pending/resource outcomes. Follow the existing process-review schema; a scalar subset is invalid. |
+| Full `process_review.binding` and its assessment | Regenerate the complete current `process-evidence` object after the final target tests, before packaging the review; check that `test_report_sha256` matches the current `tests.json`, rather than a pre-test `null` or stale hash. Review actual commands/results, including prevented requests and pending/resource outcomes. Follow the existing process-review schema; a scalar subset is invalid. |
 
 For a run with enabled process review, fill the following slots from the current
 binding before returning a PASS. `scripts/process_evidence.py:validate_review`
