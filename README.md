@@ -75,7 +75,7 @@ python3 -B "$HOME/.codex/skills/team-dev/scripts/team_dev.py" doctor
 
 需要手动准备任务时，以 [本地任务模板](examples/task-local.example.json) 为起点，替换所有路径和验收内容，并阅读 [任务合同](references/task-contract.md)。模板中的测试命令只是语法示例，必须换成该项目真正需要的检查。
 
-辅助入口包括 `policy`、`prepare`、`start`、`status`、`diagnose`、`propose`、`apply`、`test`、`record-review` 和 `finalize`。依赖步骤必须先确认上一步成功；审核不能用占位 PASS 文件替代。此辅助脚本不会自动提交或推送代码。
+辅助入口包括 `policy`、`prepare`、`start`、`status`、`diagnose`、`propose`、`apply`、`test`、`test-receipts`、`record-review` 和 `finalize`。测试收尾中断时，先用只读的 `test-receipts` 检查[逐次回执与未知结果](references/target-test-receipts.md)。依赖步骤必须先确认上一步成功；审核不能用占位 PASS 文件替代。此辅助脚本不会自动提交或推送代码。
 
 ## 验证本仓库
 

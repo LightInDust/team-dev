@@ -19,6 +19,7 @@ import uuid
 
 from worker_commands import logged_worker_test_command
 from run_diagnostics import usable_final_text
+import target_test_receipts
 from worker_bash import validate as validate_bash_policy, resolve as resolve_bash_policy, commands as bash_commands
 import worker_guidance
 
@@ -1037,8 +1038,11 @@ def test_target(run_path):
     run, meta, task = run_state(run_path)
     with local_lock(run):
         require_worker(run, meta)
+        validate_transport_policy(task, meta)
         if not meta.get('applied'):
             raise RuntimeError('Apply and verify the target first')
+        # Never replay unresolved evidence; inspect it and hand off instead.
+        target_test_receipts.require_retest_allowed(run)
         repo = target_repo(task, meta)
         strict_evidence = enabled(task, meta)
         meta['delivery'] = 'testing'
@@ -1052,58 +1056,112 @@ def test_target(run_path):
                 for path in run.glob(pattern):
                     os.replace(path, archive / path.name)
         applied = load(run / 'applied.json')
-        require_identity(repo.identity(), applied['source'])
-        require_identity(applied['source'], meta['source'])
-        before = repo.manifest(meta['paths'])
-        if fingerprint(before) != meta['applied_fingerprint']:
-            raise RuntimeError('Target changed since apply')
-        check_test_isolation(repo, task, task['allowed_paths'])
         commands = task.get('test_commands', [])
         if not commands:
             raise ValueError('No target test commands supplied')
         if strict_evidence:
             for argv in commands:
                 validate_test_argv(argv)
-        results = []
-        seconds = min(max(int(task.get('test_timeout_seconds', 60)), 1), 300)
-        for i, argv in enumerate(commands):
+        for argv in commands:
             if not isinstance(argv, list) or not argv or not all(isinstance(x, str) for x in argv):
                 raise ValueError('Test commands must be argument arrays')
-            # On SSH targets require existing coreutils timeout, never install a daemon.
-            actual = ['env', 'PYTHONDONTWRITEBYTECODE=1'] + argv
-            if repo.remote:
-                actual = ['timeout', '--signal=TERM', '--kill-after=3s', str(seconds)] + actual
-            try:
-                r = repo.run(actual, timeout=seconds + 15, check=False) if repo.remote else local_test(actual, repo.repo, seconds)
-                code, out, err = r.returncode, r.stdout, r.stderr
-            except subprocess.TimeoutExpired as error:
-                # Preserve received bytes while explicitly withholding a target exit code.
-                code, out, err = None, error.stdout or b'', error.stderr or b''
-                err += b'\nlocal transport deadline exceeded; target result unknown'
-            (run / ('test-%d.stdout' % i)).write_bytes(out)
-            (run / ('test-%d.stderr' % i)).write_bytes(err)
-            evidence = {'passed': True}
-            if task.get('task_contract_version', 1) >= 2:
-                from test_evidence import unittest_evidence
-                evidence = unittest_evidence(argv, out.decode(errors='replace'), err.decode(errors='replace'))
-            result = {'argv': argv, 'exit_code': code, 'stdout': 'test-%d.stdout' % i,
-                      'stderr': 'test-%d.stderr' % i, 'collection': evidence}
+        attempt = target_test_receipts.begin(run, task, applied)
+        seconds = min(max(int(task.get('test_timeout_seconds', 60)), 1), 300)
+        results = []
+        stage = 'preflight_identity'
+        command_index = None
+        try:
+            # Durable run-level mark: later gates reject a run whose attempt records vanish.
+            meta[target_test_receipts.RUN_MARKER] = target_test_receipts.RUN_MARKER_VERSION
+            dump(run / 'metadata.json', meta)
+            identity_before = repo.identity()
+            attempt.stage(target_test_receipts.BEFORE_IDENTITY, {'identity': identity_before})
+            require_identity(identity_before, applied['source'])
+            require_identity(applied['source'], meta['source'])
+            stage = 'before_manifest'
+            before = repo.manifest(meta['paths'])
+            before_fingerprint = fingerprint(before)
+            attempt.stage(target_test_receipts.BEFORE_MANIFEST, {
+                'fingerprint': before_fingerprint,
+                'applied_fingerprint': meta['applied_fingerprint'],
+                'matches': before_fingerprint == meta['applied_fingerprint']})
+            if before_fingerprint != meta['applied_fingerprint']:
+                raise RuntimeError('Target changed since apply')
+            stage = 'isolation'
+            check_test_isolation(repo, task, task['allowed_paths'])
+            stage = 'command'
+            for i, argv in enumerate(commands):
+                command_index = i
+                # On SSH targets require existing coreutils timeout, never install a daemon.
+                actual = ['env', 'PYTHONDONTWRITEBYTECODE=1'] + argv
+                if repo.remote:
+                    actual = ['timeout', '--signal=TERM', '--kill-after=3s', str(seconds)] + actual
+                attempt.command_intent(i, argv, actual)
+                timed_out = False
+                try:
+                    r = repo.run(actual, timeout=seconds + 15, check=False) if repo.remote else local_test(actual, repo.repo, seconds)
+                    code, out, err = r.returncode, r.stdout, r.stderr
+                except subprocess.TimeoutExpired as error:
+                    # Preserve received bytes while explicitly withholding a target exit code.
+                    timed_out = True
+                    code, out, err = None, error.stdout or b'', error.stderr or b''
+                    err += b'\nlocal transport deadline exceeded; target result unknown'
+                observed_code = None if timed_out else code
+                transport_complete = not timed_out and not (repo.remote and code == 255)
+                declared_exit = code if transport_complete else None
+                # Persist the observed result and both streams before any next step.
+                attempt.command_result(
+                    i, transport='ssh' if repo.remote else 'local',
+                    transport_complete=transport_complete,
+                    declared_exit_code=declared_exit,
+                    transport_returncode=observed_code, stdout=out, stderr=err)
+                (run / ('test-%d.stdout' % i)).write_bytes(out)
+                (run / ('test-%d.stderr' % i)).write_bytes(err)
+                evidence = {'passed': True}
+                if task.get('task_contract_version', 1) >= 2:
+                    from test_evidence import unittest_evidence
+                    evidence = unittest_evidence(argv, out.decode(errors='replace'), err.decode(errors='replace'))
+                result = {'argv': argv, 'exit_code': declared_exit, 'stdout': 'test-%d.stdout' % i,
+                          'stderr': 'test-%d.stderr' % i, 'collection': evidence}
+                if strict_evidence:
+                    result.update(stdout_sha256=digest(out), stderr_sha256=digest(err),
+                                  transport_complete=transport_complete,
+                                  transport_returncode=observed_code,
+                                  exit_scope='declared_test_process')
+                results.append(result)
+            command_index = None
+            stage = 'post_manifest'
+            after = repo.manifest(meta['paths'])
+            after_fingerprint = fingerprint(after)
+            attempt.stage(target_test_receipts.POST_MANIFEST, {
+                'fingerprint': after_fingerprint, 'unchanged': before == after})
+            stage = 'post_identity'
+            identity = repo.identity()
+            attempt.stage(target_test_receipts.POST_IDENTITY, {'identity': identity})
+            require_identity(identity, applied['source'])
+            stage = 'publish'
+            report = {'host': identity, 'fingerprint': after_fingerprint, 'unchanged': before == after,
+                      'passed': before == after and all(x['exit_code'] == 0 and x['collection']['passed'] for x in results), 'tests': results}
             if strict_evidence:
-                result.update(stdout_sha256=digest(out), stderr_sha256=digest(err),
-                              transport_complete=code is not None and not (repo.remote and code == 255),
-                              exit_scope='declared_test_process')
-            results.append(result)
-        after = repo.manifest(meta['paths'])
-        identity = repo.identity()
-        require_identity(identity, applied['source'])
-        report = {'host': identity, 'fingerprint': fingerprint(after), 'unchanged': before == after,
-                  'passed': before == after and all(x['exit_code'] == 0 and x['collection']['passed'] for x in results), 'tests': results}
-        if strict_evidence:
-            report['evidence_version'] = 1
-        dump(run / 'tests.json', report)
-        meta['delivery'] = 'pending_review' if report['passed'] else 'tests_failed'
-        dump(run / 'metadata.json', meta)
-        return report
+                report['evidence_version'] = 1
+            dump(run / 'tests.json', report)
+            meta['delivery'] = 'pending_review' if report['passed'] else 'tests_failed'
+            dump(run / 'metadata.json', meta)
+            # The completion marker is written last, after the published report.
+            attempt.complete(run / 'tests.json')
+            return report
+        except BaseException as error:
+            # Preserve the original exception; only append evidence that is reachable.
+            try:
+                attempt.failure(stage, error, command_index)
+            except Exception:
+                pass
+            try:
+                meta['delivery'] = 'tests_incomplete'
+                dump(run / 'metadata.json', meta)
+            except Exception:
+                pass
+            raise
 
 
 def record_review(run_path, review_path):
@@ -1118,9 +1176,12 @@ def record_review(run_path, review_path):
             raise ValueError('Require a Sol review with an explicit verdict')
         if review.get('fingerprint') != meta.get('applied_fingerprint'):
             raise ValueError('Review must bind to the applied fingerprint')
-        if review.get('verdict') == 'pass' and enabled(task, meta):
-            validate_test_logs(run, task, load(run / 'tests.json'))
-            validate_review(run, task, meta, review)
+        if review.get('verdict') == 'pass':
+            # New receipt evidence is acceptable only as a complete capture of this report.
+            target_test_receipts.require_report_receipt(run)
+            if enabled(task, meta):
+                validate_test_logs(run, task, load(run / 'tests.json'))
+                validate_review(run, task, meta, review)
         if review.get('verdict') == 'pass' and strict_provenance:
             reviewer_provenance.validate(run, review)
         # Invalidate a previous verification before changing review evidence.
@@ -1144,6 +1205,7 @@ def finalize(run_path):
             dump(run / 'metadata.json', meta)
         require_worker(run, meta)
         tests, review = load(run / 'tests.json'), load(run / 'review.json')
+        target_test_receipts.require_report_receipt(run)
         if strict_evidence:
             validate_test_logs(run, task, tests)
             validate_review(run, task, meta, review)
@@ -1194,7 +1256,7 @@ def local_test(argv, cwd, seconds):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('action', choices=['doctor', 'policy', 'prepare', 'run', 'start', 'status', 'cancel',
-                                     'propose', 'apply', 'test', 'record-review', 'finalize', 'steer', 'resume', 'diagnose', 'process-evidence'])
+                                     'propose', 'apply', 'test', 'record-review', 'finalize', 'steer', 'resume', 'diagnose', 'process-evidence', 'test-receipts'])
     p.add_argument('--task')
     p.add_argument('--run')
     p.add_argument('--review')
@@ -1225,6 +1287,9 @@ def main():
             run, meta, task = run_state(a.run)
             exact_policy = validate_bash_policy(task, meta, run)
             result = binding(run, async_required=async_enabled(task, meta), live_output_required=live_output_enabled(task, meta), exact_bash_policy=exact_policy) if enabled(task, meta) else {'enabled': False, 'reason': 'legacy_run'}
+        elif a.action == 'test-receipts':
+            # Local receipt bytes only: no Repo, SSH, config or provider access.
+            result = target_test_receipts.test_receipts(a.run)
         elif a.action == 'record-review':
             result = record_review(a.run, a.review)
         else:
