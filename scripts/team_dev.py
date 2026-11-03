@@ -330,10 +330,26 @@ def new_worker_model(task):
 
 
 def prepare(task_path):
+    return prepare_task(load(task_path))
+
+
+def fallback_enabled(task, model):
+    disabled = task.get('disable_provider_fallback', False)
+    if type(disabled) is not bool:
+        raise ValueError('disable_provider_fallback must be boolean')
+    if disabled or model != DEFAULT_MODEL:
+        return False
+    path = CONFIG / 'runtime.json'
+    return path.is_file() and load(path).get('opencode_network_billing_fallback') is True
+
+
+def prepare_task(request, *, recovery_from=None):
     from process_evidence import POLICY, POLICY_GATE, validate_test_argv
     from reviewer_provenance import POLICY as REVIEWER_POLICY
     from async_evidence import POLICY_KEY as ASYNC_KEY, POLICY as ASYNC_POLICY
-    task = load(task_path)
+    task = copy.deepcopy(request)
+    if 'provider_fallback_policy' in task:
+        raise ValueError('provider_fallback_policy is reserved for prepared runs')
     if task.get('agent_runtime', 'local') != 'local':
         raise ValueError('All model agents must run locally')
     allowed = [checked_path(p) for p in task['allowed_paths']]
@@ -357,6 +373,7 @@ def prepare(task_path):
     if bash_mode(task) == 'declared_tests_only':
         task['process_evidence_policy'] = copy.deepcopy(POLICY_GATE)
     model = new_worker_model(task)
+    allow_fallback = fallback_enabled(task, model) and recovery_from is None
     validate_worker_options(task, resolve=True)
     repo = Repo(task['target'])
     task['transport_policy'] = copy.deepcopy(repo.transport_policy)
@@ -386,6 +403,10 @@ def prepare(task_path):
     git(snapshot, '-c', 'user.name=Team Dev Snapshot', '-c', 'user.email=team-dev@localhost',
         'commit', '-q', '--allow-empty', '-m', 'Captured task source')
     task['worker_model'] = model
+    if allow_fallback:
+        task['provider_fallback_policy'] = {'version': 1, 'to': SECONDARY_MODEL,
+                                            'request_sha256': fingerprint(request)}
+        dump(run/'fallback-request.json', request)
     task['worker_bash_policy'] = resolve_bash_policy(task, run)
     from bash_gate import prepare as prepare_gate, KEY as GATE_KEY
     prepare_gate(task, run)
@@ -402,6 +423,10 @@ def prepare(task_path):
                 ASYNC_KEY: copy.deepcopy(ASYNC_POLICY),
                 'worker_guidance_policy': copy.deepcopy(task['worker_guidance_policy']),
                 'snapshot_guard': {'version': 1, 'allowed_deletions': task['allowed_deletions']}}
+    if 'provider_fallback_policy' in task:
+        metadata['provider_fallback_policy'] = task['provider_fallback_policy']
+    if recovery_from is not None:
+        metadata.update(attempt=2, recovery_from=str(recovery_from))
     if GATE_KEY in task:
         metadata[GATE_KEY] = copy.deepcopy(task[GATE_KEY])
     dump(run / 'metadata.json', metadata)
@@ -747,6 +772,62 @@ def rpc_python():
     return python
 
 
+def launch_provider_fallback(run, meta, task, result):
+    """Called once by the primary supervisor under its existing operation lock."""
+    from provider_failover import recoverable_fault
+    receipt = run/'provider-fallback.json'
+    policy = meta.get('provider_fallback_policy')
+    if (not policy or policy != task.get('provider_fallback_policy') or
+            frozen_model(task, meta) != DEFAULT_MODEL or (run/'cancel-requested').exists() or
+            receipt.exists()):
+        return
+    reason = recoverable_fault(run, meta, result)
+    if not reason:
+        return
+    if snapshot_changes(run, meta, task):
+        return
+    request = load(run/'fallback-request.json')
+    if policy != {'version': 1, 'to': SECONDARY_MODEL, 'request_sha256': fingerprint(request)}:
+        raise ValueError('Fallback policy/request mismatch')
+    record = {'state': 'preparing', 'reason': reason, 'attempt': 2, 'model': SECONDARY_MODEL}
+    dump(receipt, record)
+    try:
+        request.update(worker_model=SECONDARY_MODEL, disable_provider_fallback=True)
+        child = prepare_task(request, recovery_from=run)
+        child_run = Path(child['run'])
+        record.update(run=str(child_run), state='prepared')
+        dump(receipt, record)
+        require_identity(child['source'], meta['source'])
+        if (child['paths'] != meta['paths'] or load(child_run/'baseline.json') != load(run/'baseline.json') or
+                child['execution_policy'] != meta['execution_policy'] or child['transport_policy'] != meta['transport_policy']):
+            raise RuntimeError('Fallback target or policy changed')
+        if (run/'cancel-requested').exists():
+            record['state'] = 'cancelled'
+        else:
+            record['state'] = 'launching'
+            dump(receipt, record)
+            start(child_run)
+            record['state'] = 'started'
+    except Exception as error:
+        # Never re-launch after an ambiguous start, or expose exception payloads.
+        record.update(state='blocked', error_type=type(error).__name__)
+    dump(receipt, record)
+
+
+def validate_recovery_launch(run, meta, *, supervisor):
+    if 'recovery_from' not in meta:
+        return
+    parent = Path(meta['recovery_from'])
+    receipt = load(parent/'provider-fallback.json')
+    states = ('launching', 'started') if supervisor else ('launching',)
+    if ((supervisor and meta.get('process') != 'launching') or
+            meta.get('attempt') != 2 or meta.get('worker_model') != SECONDARY_MODEL or
+            parent.parent != run.parent or receipt.get('run') != str(run) or
+            receipt.get('state') not in states or (parent/'cancel-requested').exists() or
+            (run/'cancel-requested').exists()):
+        raise RuntimeError('Fallback launch is not authorized by the original handoff')
+
+
 def worker(run_path):
     from rpc_worker import execute
     run, meta, task = run_state(run_path)
@@ -754,6 +835,7 @@ def worker(run_path):
         if meta['process'] not in ('not_started', 'launching', 'launch_failed'):
             raise RuntimeError('Use resume or a new run for a new implementation attempt')
         try:
+            validate_recovery_launch(run, meta, supervisor=True)
             validate_worker_options(task, expected_policy=meta.get('execution_policy'))
             validate_transport_policy(task, meta)
             validate_bash_policy(task, meta, run)
@@ -794,6 +876,12 @@ def worker(run_path):
                         delivery='pending_review' if state == 'exited' else 'worker_failed')
             if (run / 'failure.json').exists():
                 meta['failure_reason'] = load(run / 'failure.json')['reason']
+            if state != 'exited' and meta.get('provider_fallback_policy'):
+                try:
+                    launch_provider_fallback(run, meta, task, result)
+                except Exception as error:
+                    if not (run/'provider-fallback.json').exists():
+                        dump(run/'provider-fallback.json', {'state': 'blocked', 'error_type': type(error).__name__})
             dump(run / 'metadata.json', meta)
             return meta
         except Exception as error:
@@ -810,6 +898,7 @@ def start(run_path):
     with local_lock(run):
         if meta['process'] not in ('not_started', 'launch_failed'):
             raise RuntimeError('Run already started')
+        validate_recovery_launch(run, meta, supervisor=False)
         validate_worker_options(task, expected_policy=meta.get('execution_policy'))
         validate_transport_policy(task, meta)
         validate_bash_policy(task, meta, run)
@@ -840,6 +929,8 @@ def status(run_path):
     if (run / 'progress.json').exists():
         meta['progress'] = load(run / 'progress.json')
         meta['progress']['age_seconds'] = max(0, time.time() - meta['progress']['updated_at'])
+    if (run/'provider-fallback.json').is_file():
+        meta['provider_fallback'] = load(run/'provider-fallback.json')
     if meta['process'] not in ('launching', 'running', 'not_started'):
         from run_diagnostics import diagnose_run
         meta['diagnostics'] = diagnose_run(run)
@@ -848,9 +939,19 @@ def status(run_path):
 
 def cancel(run_path):
     run, meta, _ = run_state(run_path)
-    if meta['process'] not in ('running', 'launching'):
+    receipt = run/'provider-fallback.json'
+    if meta['process'] not in ('running', 'launching') and not receipt.is_file():
         raise RuntimeError('Worker is not active; inspect status')
     (run / 'cancel-requested').write_text('requested\n')
+    # The primary publishes the child path before its last cancellation check.
+    # A cancellation racing with start is also observed by the child supervisor.
+    child_path = load(receipt).get('run') if receipt.is_file() else None
+    if child_path:
+        child, child_meta, _ = run_state(child_path)
+        if child.parent != run.parent or child_meta.get('recovery_from') != str(run):
+            raise RuntimeError('Fallback child identity mismatch')
+        if child_meta['process'] in ('not_started', 'launching', 'running'):
+            (child/'cancel-requested').write_text('requested\n')
     # RPC supervisor observes the marker; old JSON workers need a group signal.
     if meta.get('worker_mode') != 'rpc' and meta['process'] == 'running':
         stop_group(meta['pid'], meta['process_stamp'])
@@ -879,7 +980,7 @@ def resume(run_path, message_file):
         exact_policy = validate_bash_policy(task, meta, run)
         if meta['process'] not in ('stalled', 'cancelled', 'timed_out', 'failed'):
             raise RuntimeError('Resume requires a stopped unsuccessful run')
-        if meta.get('attempt', 1) >= 2:
+        if (run/'provider-fallback.json').exists() or meta.get('attempt', 1) >= 2:
             raise RuntimeError('Recovery budget exhausted; split the task and prepare a new run')
         reason = load(run / 'failure.json').get('reason') if (run / 'failure.json').exists() else None
         if reason == 'candidate_closeout_deadline':
@@ -1283,7 +1384,8 @@ def main():
             model = new_worker_model({})
             route = route_for(model)
             result = {'omp': shutil.which('omp'), 'credential_file_exists': (CONFIG / route.credential_file).is_file(),
-                      'model': model, 'profile': route.profile, 'agent_runtime': 'local', 'remote_omp_required': False}
+                      'model': model, 'profile': route.profile,
+                      'fallback_worker_model': SECONDARY_MODEL if fallback_enabled({}, model) else None, 'agent_runtime': 'local', 'remote_omp_required': False}
         elif a.action == 'policy':
             from execution_policy import resolve_policy
             result = resolve_policy(load(a.task))
