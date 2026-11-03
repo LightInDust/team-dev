@@ -3,7 +3,9 @@ name: team-dev
 description: "Coordinate Astra, a local OMP DeepSeek coding worker, and a native Sol reviewer for local or SSH Git code tasks, with version-checked changes and target-environment tests. Use for requested team-dev or this three-model workflow."
 ---
 
-Keep the user in Codex on the Mac. Astra coordinates and accepts the whole task, local OMP DeepSeek implements, and native Sol independently reviews. Remote targets need SSH, Git and their existing test environment; do not install OMP or copy model credentials there. Use `scripts/team_dev.py`. Omit `worker_model` on new tasks to use this installation’s default. For an explicit override, use the requested selector from the task contract. The helper freezes the selection at preparation and launches the corresponding local OMP profile with its own credential. `doctor` reports the local default.
+Keep the user in Codex on the Mac. Astra coordinates and accepts the whole task, local OMP DeepSeek implements, and native Sol independently reviews. Remote targets need SSH, Git and their existing test environment; do not install OMP or copy model credentials there. Use `scripts/team_dev.py` for execution.
+
+For each new coding task requested in chat, establish which provider the user wants before `prepare`. Use an explicitly named route or an unambiguous model selector. If the user says “use the default” for this task, use the selector reported by `doctor`. If the choice for this task is missing or ambiguous, ask once in chat which provider to use. Use the chat choice dialog when available, or a plain chat question otherwise. Show the two routes by name, with the local default reported by `doctor` first and marked as default. Wait for the user to submit a choice before proceeding, even when the dialog preselects the default. Set `worker_model` explicitly to the chosen selector in the task JSON. Carry that choice through slices and retries of the same task. Use the frozen selector when continuing a prepared run. For a plan-only request, defer the question until execution is requested.
 
 ## Choose the applicable guidance
 

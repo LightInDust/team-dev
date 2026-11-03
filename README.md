@@ -29,7 +29,7 @@ Astra 定义任务、文件范围、接口和验收条件
 
 严格 Bash 门禁按 OMP 18.2.8 固定校验，不能直接把“最新版 OMP”视为兼容。其他操作系统与 OMP 版本需要单独验证。模型服务的可用性、费用和额度由服务商决定；本仓库不附带账户或凭据。
 
-新任务省略 `worker_model` 时采用本机 `runtime.json` 中的 `default_worker_model`，未设置时使用 `opencode-ds/deepseek-v4.1-flash`。如需为单个任务切换服务，在任务 JSON 中显式填写下表的 selector。已准备任务沿用各自保存的选择。Sol 的请求路由不等于已验证的后端模型身份；宿主不暴露实际身份时保留未知状态。
+在 Codex 对话里，新任务未指定服务商时，Astra 会先让你选择，并把本机默认路线列在首位。你也可以直接说“用默认”或“用 OpenCode”。同一任务继续执行时沿用已选路线。直接调用命令行时，任务 JSON 省略 `worker_model` 会采用本机 `runtime.json` 中的 `default_worker_model`，未设置时使用 `opencode-ds/deepseek-v4.1-flash`。如需为单个任务切换服务，在任务 JSON 中显式填写下表的 selector。已准备任务沿用各自保存的选择。Sol 的请求路由不等于已验证的后端模型身份；宿主不暴露实际身份时保留未知状态。
 
 ## 安装
 
