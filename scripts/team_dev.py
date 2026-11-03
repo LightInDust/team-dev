@@ -23,7 +23,7 @@ import target_test_receipts
 from worker_bash import validate as validate_bash_policy, resolve as resolve_bash_policy, commands as bash_commands
 import worker_guidance
 
-from worker_model import DEFAULT_MODEL, frozen_model, model_id
+from worker_model import DEFAULT_MODEL, SECONDARY_MODEL, frozen_model, model_id, route_for
 
 MODEL = DEFAULT_MODEL
 CONFIG = Path.home() / '.config/codex-team-dev'
@@ -317,6 +317,18 @@ def handoff_template(task):
     return '\n'.join(lines)
 
 
+def new_worker_model(task):
+    if 'worker_model' in task:
+        selected = task['worker_model']
+    else:
+        runtime_path = CONFIG / 'runtime.json'
+        runtime = load(runtime_path) if runtime_path.exists() else {}
+        selected = runtime.get('default_worker_model', MODEL)
+    if selected not in (MODEL, SECONDARY_MODEL):
+        raise ValueError('Unsupported worker model for new tasks')
+    return selected
+
+
 def prepare(task_path):
     from process_evidence import POLICY, POLICY_GATE, validate_test_argv
     from reviewer_provenance import POLICY as REVIEWER_POLICY
@@ -344,9 +356,7 @@ def prepare(task_path):
     from worker_bash import mode as bash_mode
     if bash_mode(task) == 'declared_tests_only':
         task['process_evidence_policy'] = copy.deepcopy(POLICY_GATE)
-    model = task.get('worker_model', MODEL)
-    if model != MODEL:
-        raise ValueError('This configured profile supports only ' + MODEL)
+    model = new_worker_model(task)
     validate_worker_options(task, resolve=True)
     repo = Repo(task['target'])
     task['transport_policy'] = copy.deepcopy(repo.transport_policy)
@@ -562,10 +572,10 @@ def check_test_isolation(repo, task, paths):
             raise ValueError('test_isolation_violation: ' + path + ' ' + json.dumps(violations))
 
 
-def worker_env():
-    key = load(CONFIG / 'credentials.json')['opencode_api_key']
-    if not key or key.isspace():
-        raise ValueError('Missing OpenCode credential')
+def worker_env(route):
+    key = load(CONFIG / route.credential_file).get(route.credential_key)
+    if not isinstance(key, str) or not key.strip():
+        raise ValueError('Missing credential for worker profile ' + route.profile)
     # Pass runtime/network basics, never inherit other providers' authentication.
     names = ('HOME', 'USER', 'LOGNAME', 'PATH', 'TMPDIR', 'LANG', 'LC_ALL', 'SSL_CERT_FILE',
              'SSL_CERT_DIR', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY',
@@ -575,7 +585,7 @@ def worker_env():
     if runtime.get('http_proxy'):
         for name in ('HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy'):
             env[name] = runtime['http_proxy']
-    env.update({'OMP_OPENCODE_API_KEY': key, 'PYTHONDONTWRITEBYTECODE': '1'})
+    env.update({route.credential_env: key, 'PYTHONDONTWRITEBYTECODE': '1'})
     return env
 
 
@@ -748,11 +758,12 @@ def worker(run_path):
             validate_transport_policy(task, meta)
             validate_bash_policy(task, meta, run)
             selected_model = frozen_model(task, meta)
-            env = worker_env()
+            route = route_for(selected_model)
+            env = worker_env(route)
             omp = shutil.which('omp')
             if not omp:
                 raise RuntimeError('omp is not in PATH')
-            argv = [omp, '--profile', 'codex-ds', '--cwd', str(run / 'snapshot'), '--model', selected_model,
+            argv = [omp, '--profile', route.profile, '--cwd', str(run / 'snapshot'), '--model', selected_model,
                     '--thinking', task['worker_thinking'], '--mode', 'rpc', '--no-extensions',
                     '--no-skills', '--no-title', '--no-prewalk', '--no-lsp',
                     '--tools', 'read,grep,glob,edit,write,bash', '--session-dir', str(run / 'sessions')]
@@ -761,7 +772,7 @@ def worker(run_path):
             meta['omp_version'] = cmd([omp, '--version']).stdout.decode().strip()
             from bash_gate import launch as launch_gate
             launch_gate(run, task, meta, env, argv, meta['omp_version'])
-            dump(run / 'invocation.json', {'argv': argv, 'credential_env': 'OMP_OPENCODE_API_KEY'})
+            dump(run / 'invocation.json', {'argv': argv, 'credential_env': route.credential_env})
             def candidate_paths():
                 return snapshot_changes(run, meta, task)
             state, code = execute(run, meta, task, env, argv, dump, process_stamp, candidate_paths,
@@ -802,8 +813,7 @@ def start(run_path):
         validate_worker_options(task, expected_policy=meta.get('execution_policy'))
         validate_transport_policy(task, meta)
         validate_bash_policy(task, meta, run)
-        frozen_model(task, meta)
-        worker_env()
+        worker_env(route_for(frozen_model(task, meta)))
         python = rpc_python()
         if not shutil.which('omp'):
             raise RuntimeError('omp is not in PATH')
@@ -1270,8 +1280,10 @@ def main():
         if a.action in ('steer', 'resume'):
             result = {'steer': steer, 'resume': resume}[a.action](a.run, a.message_file)
         elif a.action == 'doctor':
-            result = {'omp': shutil.which('omp'), 'credential_file_exists': (CONFIG / 'credentials.json').exists(),
-                      'model': MODEL, 'agent_runtime': 'local', 'remote_omp_required': False}
+            model = new_worker_model({})
+            route = route_for(model)
+            result = {'omp': shutil.which('omp'), 'credential_file_exists': (CONFIG / route.credential_file).is_file(),
+                      'model': model, 'profile': route.profile, 'agent_runtime': 'local', 'remote_omp_required': False}
         elif a.action == 'policy':
             from execution_policy import resolve_policy
             result = resolve_policy(load(a.task))

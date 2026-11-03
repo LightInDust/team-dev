@@ -60,6 +60,9 @@ class BridgeTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.repo = self.root / 'repo'
         self.repo.mkdir()
+        config = mock.patch.object(m, 'CONFIG', self.root / 'config')
+        config.start()
+        self.addCleanup(config.stop)
         m.RUNS = self.root / 'runs'
         (self.repo / 'code.py').write_text('original\n')
         (self.repo / 'remove.txt').write_text('delete me\n')

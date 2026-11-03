@@ -14,7 +14,7 @@ from snapshot_guard import SnapshotViolation
 from run_diagnostics import error_kind
 from provider_evidence import request_configuration
 from startup_monitor import StartupMonitor, first_output_wait
-from worker_model import frozen_model, model_id, PROVIDER
+from worker_model import frozen_model
 from command_audit import CommandAudit, inspect_bash
 from process_evidence import ToolEvidence, enabled, async_enabled, blocked_requests, live_output_enabled
 from live_output import LiveOutputAudit, inspect as inspect_live_output, OBSERVATION as LIVE_FILTER
@@ -82,7 +82,7 @@ def exception_evidence(error):
 
 def execute(run, meta, task, env, argv, dump, process_stamp, candidate_paths,
             client_factory=RpcClient, preflight=None):
-    expected_model = model_id(frozen_model(task, meta))
+    expected_provider, expected_model = frozen_model(task, meta).split('/', 1)
     started = time.monotonic()
     monitor = ProgressMonitor(started, **task.get('progress', {}))
     closeout = CloseoutMonitor(started, task['execution_policy']['closeout']
@@ -187,7 +187,7 @@ def execute(run, meta, task, env, argv, dump, process_stamp, candidate_paths,
         process = client._process
         state = client.get_state()
         if (state.model is None or state.model.id != expected_model or
-                state.model.provider != PROVIDER or state.thinking_level != task['worker_thinking']):
+                state.model.provider != expected_provider or state.thinking_level != task['worker_thinking']):
             raise RuntimeError('RPC model/thinking does not match the task')
         if meta.get('resume_session') and (not state.session_file or
                 Path(state.session_file).resolve() != Path(meta['resume_session']).resolve()):

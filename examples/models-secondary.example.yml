@@ -1,0 +1,11 @@
+# Replace only the API root with your private service address.
+providers:
+  secondary-ds:
+    baseUrl: https://api.example.invalid/v1
+    api: openai-completions
+    apiKey: OMP_SECONDARY_DS_API_KEY
+    models:
+      - id: deepseek-v4-flash-ascend1
+        name: Secondary DeepSeek
+        reasoning: true
+        input: [text]

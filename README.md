@@ -24,12 +24,12 @@ Astra 定义任务、文件范围、接口和验收条件
 | --- | --- |
 | Codex 主控 | 支持原生子代理，并能请求 `gpt-5.6-sol` / `max`；主控使用 Astra |
 | 本地 worker | macOS 为已验证环境；Git、SSH、Python 3.11+（测试使用 3.12）、PATH 上的 OMP **18.2.8** |
-| 模型服务 | 可用的 OpenAI Chat Completions 兼容接口，提供 `deepseek-v4.1-flash` 和工具调用能力 |
+| 模型服务 | 可用的 OpenAI Chat Completions 兼容接口，支持所选模型、流式输出和工具调用 |
 | SSH 目标 | 已配置的 SSH 别名与认证、Git、POSIX Python 3.9+、GNU `timeout` 及项目已有测试环境 |
 
 严格 Bash 门禁按 OMP 18.2.8 固定校验，不能直接把“最新版 OMP”视为兼容。其他操作系统与 OMP 版本需要单独验证。模型服务的可用性、费用和额度由服务商决定；本仓库不附带账户或凭据。
 
-默认 worker selector 是 `opencode-ds/deepseek-v4.1-flash`，历史模型兼容仅用于已有记录。更换 provider/model 需要同步检查 [模型约束](scripts/worker_model.py)，不能只改一个配置字段。Sol 的请求路由不等于已验证的后端模型身份；宿主不暴露实际身份时保留未知状态。
+新任务省略 `worker_model` 时采用本机 `runtime.json` 中的 `default_worker_model`，未设置时使用 `opencode-ds/deepseek-v4.1-flash`。如需为单个任务切换服务，在任务 JSON 中显式填写下表的 selector。已准备任务沿用各自保存的选择。Sol 的请求路由不等于已验证的后端模型身份；宿主不暴露实际身份时保留未知状态。
 
 ## 安装
 
@@ -50,10 +50,17 @@ git clone git@github.com:LightInDust/team-dev.git "$HOME/.codex/skills/team-dev"
 | 目标文件 | 参考模板 / 用途 |
 | --- | --- |
 | `~/.config/codex-team-dev/credentials.json` | [credentials.example.json](examples/credentials.example.json)，填写自己的 API key |
-| `~/.config/codex-team-dev/runtime.json` | [runtime.example.json](examples/runtime.example.json)，填写可用 Python 3.11+ 的绝对路径；可选 `http_proxy` 使用自己的地址 |
+| `~/.config/codex-team-dev/runtime.json` | [runtime.example.json](examples/runtime.example.json)，填写可用 Python 3.11+ 的绝对路径；可选 `http_proxy` 使用自己的地址，`default_worker_model` 选择新任务的本机默认路线 |
 | `~/.omp/profiles/codex-ds/agent/models.yml` | [models.example.yml](examples/models.example.yml)，填写自己的接口 API root |
 
-配置目录权限使用 `700`，凭据文件权限使用 `600`。在本机编辑凭据，避免把密钥写进聊天、命令行参数、任务 JSON 或 Git。OMP 的 `apiKey` 保持 `OMP_OPENCODE_API_KEY` 环境变量引用；辅助脚本从本地凭据文件读取后仅传入 worker 环境。
+配置目录权限使用 `700`，凭据文件权限使用 `600`。在本机编辑凭据，避免把密钥写进聊天、命令行参数、任务 JSON 或 Git。OMP 的 `apiKey` 填下表中的环境变量名；辅助脚本只向 worker 提供所选路线的凭据。
+
+| selector | OMP profile | 私有凭据文件和字段 | OMP 环境变量 |
+| --- | --- | --- | --- |
+| `opencode-ds/deepseek-v4.1-flash` | `codex-ds` | `credentials.json` 的 `opencode_api_key` | `OMP_OPENCODE_API_KEY` |
+| `secondary-ds/deepseek-v4-flash-ascend1` | `codex-ds-secondary` | `secondary-credentials.json` 的 `api_key` | `OMP_SECONDARY_DS_API_KEY` |
+
+第二条路线使用独立的 `~/.omp/profiles/codex-ds-secondary/agent/models.yml`。参照[配置示例](examples/models-secondary.example.yml)填入自己的 API 根地址。在该 profile 的 `agent/config.yml` 设置 `modelRoles.default` 为第二条路线的 selector，关闭模型回退（`retry.modelFallback: false`）。配置模型时保留 `reasoning: true`，OMP 才能向 helper 报告任务选择的推理等级。
 
 `baseUrl` 填 API 根地址，不包含末尾 `/chat/completions`。代理是可选网络设置，按本机实际情况配置。不要复制他人的配置、代理地址或私钥。
 

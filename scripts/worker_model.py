@@ -1,9 +1,27 @@
 """Current default and frozen worker identity; old receipts retain their model."""
 
+from collections import namedtuple
+
 PROVIDER = 'opencode-ds'
 LEGACY_MODEL = PROVIDER + '/deepseek-v4-flash'
 DEFAULT_MODEL = PROVIDER + '/deepseek-v4.1-flash'
-SUPPORTED_MODELS = (LEGACY_MODEL, DEFAULT_MODEL)
+SECONDARY_MODEL = 'secondary-ds/deepseek-v4-flash-ascend1'
+SUPPORTED_MODELS = (LEGACY_MODEL, DEFAULT_MODEL, SECONDARY_MODEL)
+
+Route = namedtuple('Route', 'profile credential_file credential_key credential_env')
+
+
+_ROUTES = {
+    LEGACY_MODEL: Route('codex-ds', 'credentials.json', 'opencode_api_key', 'OMP_OPENCODE_API_KEY'),
+    DEFAULT_MODEL: Route('codex-ds', 'credentials.json', 'opencode_api_key', 'OMP_OPENCODE_API_KEY'),
+    SECONDARY_MODEL: Route('codex-ds-secondary', 'secondary-credentials.json', 'api_key', 'OMP_SECONDARY_DS_API_KEY'),
+}
+
+
+def route_for(selector):
+    if not isinstance(selector, str) or selector not in _ROUTES:
+        raise ValueError('Unsupported worker model; prepare a fresh run')
+    return _ROUTES[selector]
 
 
 def model_id(selector):
@@ -29,3 +47,10 @@ def diagnostic_model_id(meta):
         return model_id(meta.get('worker_model', LEGACY_MODEL))
     except ValueError:
         return None
+
+
+def matches_saved_selector(meta, observed_provider, observed_model):
+    expected_model = diagnostic_model_id(meta)
+    if expected_model is None or observed_model != expected_model:
+        return False
+    return observed_provider == meta.get('worker_model', LEGACY_MODEL).split('/', 1)[0]

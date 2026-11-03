@@ -1,11 +1,12 @@
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
 from unittest import mock
 
 import team_dev as bridge
-from worker_model import DEFAULT_MODEL, LEGACY_MODEL, frozen_model, model_id
+from worker_model import DEFAULT_MODEL, LEGACY_MODEL, SECONDARY_MODEL, frozen_model, model_id, route_for
 from provider_evidence import provider_access
 from run_diagnostics import diagnose_run
 from startup_monitor import read_startup
@@ -35,7 +36,7 @@ class WorkerModelTests(unittest.TestCase):
             task = {'target': {'transport': 'local', 'repo': str(repo)}, 'goal': 'fixture',
                     'allowed_paths': ['code.py'], 'test_commands': [['/usr/bin/true']]}
             task_file = root/'task.json'; bridge.dump(task_file, task)
-            with mock.patch.object(bridge, 'RUNS', root/'runs'):
+            with mock.patch.object(bridge, 'RUNS', root/'runs'), mock.patch.object(bridge, 'CONFIG', root/'config'):
                 run = Path(bridge.prepare(task_file)['run'])
                 prepared, meta = bridge.load(run/'task.json'), bridge.load(run/'metadata.json')
                 self.assertEqual(frozen_model(prepared, meta), DEFAULT_MODEL)
@@ -47,6 +48,54 @@ class WorkerModelTests(unittest.TestCase):
                 self.assertEqual(old, {p.name: p.read_bytes() for p in (run/'task.json', run/'metadata.json')})
                 task['worker_model'] = LEGACY_MODEL; bridge.dump(task_file, task)
                 with self.assertRaises(ValueError): bridge.prepare(task_file)
+
+    def test_local_default_override_and_freeze_across_default_change(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root/'repo'
+            repo.mkdir()
+            bridge.git(repo, 'init', '-q')
+            bridge.git(repo, '-c', 'user.name=Test', '-c', 'user.email=test@localhost',
+                       'commit', '--allow-empty', '-qm', 'baseline')
+            task = {'target': {'transport': 'local', 'repo': str(repo)}, 'goal': 'fixture',
+                    'allowed_paths': ['new.py'], 'test_commands': [['/usr/bin/true']]}
+            with mock.patch.object(bridge, 'RUNS', root/'runs'), mock.patch.object(bridge, 'CONFIG', root):
+                bridge.dump(root/'runtime.json', {'default_worker_model': SECONDARY_MODEL})
+                prepared = []
+                for override in (None, DEFAULT_MODEL):
+                    if override:
+                        task['worker_model'] = override
+                    bridge.dump(root/'input.json', task)
+                    prepared.append(Path(bridge.prepare(root/'input.json')['run']))
+                bridge.dump(root/'runtime.json', {'default_worker_model': LEGACY_MODEL})
+                with self.assertRaises(ValueError):
+                    bridge.new_worker_model({})
+                for run, expected in zip(prepared, (SECONDARY_MODEL, DEFAULT_MODEL)):
+                    self.assertEqual(frozen_model(bridge.load(run/'task.json'),
+                                                  bridge.load(run/'metadata.json')), expected)
+
+    def test_selected_route_isolates_credentials_from_files_and_parent_environment(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(bridge, 'CONFIG', Path(tmp)):
+            old, new = route_for(DEFAULT_MODEL), route_for(SECONDARY_MODEL)
+            bridge.dump(Path(tmp)/old.credential_file, {old.credential_key: 'synthetic-first'})
+            with mock.patch.dict(os.environ, {old.credential_env: 'parent-one', new.credential_env: 'parent-two'}):
+                with self.assertRaises(FileNotFoundError):
+                    bridge.worker_env(new)
+                bridge.dump(Path(tmp)/new.credential_file, {new.credential_key: 'synthetic-second'})
+                for route, other, value in ((old, new, 'synthetic-first'), (new, old, 'synthetic-second')):
+                    env = bridge.worker_env(route)
+                    self.assertEqual(env[route.credential_env], value)
+                    self.assertNotIn(other.credential_env, env)
+
+    def test_secondary_diagnostics_require_matching_provider_and_model(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            meta = {'worker_model': SECONDARY_MODEL}
+            for provider, matches in (('secondary-ds', True), ('opencode-ds', False)):
+                bridge.dump(root/'rpc-state.json', {'provider': provider, 'model': model_id(SECONDARY_MODEL)})
+                access = provider_access(root, meta, {}, {}, http_errors=0, final_text_present=True)
+                self.assertEqual(access['local_selector'] == 'expected_selector_observed', matches)
+                self.assertEqual(read_startup(root, meta)['rpc_ready_evidence'], matches)
 
     def test_delivery_requires_the_frozen_model_not_any_supported_model(self):
         with tempfile.TemporaryDirectory() as tmp:

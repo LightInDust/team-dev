@@ -1,7 +1,7 @@
 """Local selection/configuration observations, never an endpoint health check."""
 import json
 from pathlib import Path
-from worker_model import diagnostic_model_id, PROVIDER
+from worker_model import matches_saved_selector
 
 
 ENDPOINT_FAMILIES = {
@@ -41,8 +41,7 @@ def provider_access(run, meta, result, startup, *, http_errors, final_text_prese
         state, state_status = {}, 'unreadable'
     selector = 'unknown'
     if all(isinstance(state.get(k), str) and state[k].strip() for k in ('model', 'provider')):
-        selector = ('expected_selector_observed' if state['model'] == diagnostic_model_id(meta) and
-                    state['provider'] == PROVIDER else 'other_selector_observed')
+        selector = ('expected_selector_observed' if matches_saved_selector(meta, state['provider'], state['model']) else 'other_selector_observed')
     route = state.get('request_configuration')
     route_status = 'unreadable' if state_status == 'unreadable' else 'not_recorded'
     safe_route = None

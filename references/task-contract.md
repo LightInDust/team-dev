@@ -5,7 +5,6 @@ The helper's task format is:
 ```json
 {
   "agent_runtime": "local",
-  "worker_model": "opencode-ds/deepseek-v4.1-flash",
   "worker_bash_mode": "declared_tests_only",
   "worker_thinking": "low",
   "budget_mode": "auto",
@@ -28,7 +27,7 @@ defaults to `standard`; text in `constraints` does not select a mode or enable
 interception. Standard mode does not waive task restrictions. Follow the
 [mode check before launch](#exact-bash-mode) even when copying a previous task.
 
-New tasks default to `opencode-ds/deepseek-v4.1-flash`. Preparation saves `worker_model` in both task and metadata; launch and acceptance require both copies to agree. Existing runs retain their saved V4 or V4.1 selector, while markerless historical runs retain V4. Do not edit an old run to migrate it: prepare a fresh task. The local profile keeps the historical model definition for compatibility; this does not assert that the old upstream remains available. Endpoint, credential source, proxy and effort/budget profiles are unchanged.
+New tasks use the local `runtime.json` setting `default_worker_model` when the task omits `worker_model`. Without that setting the packaged default is `opencode-ds/deepseek-v4.1-flash`. To override one task, set its `worker_model` to that selector or `secondary-ds/deepseek-v4-flash-ascend1`. Preparation freezes the exact selection in both task and metadata. At launch the selected route determines the OMP profile and the credential injected into its environment. Missing credentials or a provider/model mismatch stop the launch. There is no automatic provider failover. Existing V4/V4.1 runs keep their saved selectors; markerless historical records resolve to OpenCode V4. See [local worker profiles](#local-worker-profiles) for setup.
 
 For local code, set transport to `local`, host to null, and repo to an absolute local Git root. Exact regular-file paths only, up to 100 files and 4 MiB each. Symlinks, Git submodules, directory path patterns and non-Git targets are unsupported. Select relevant context explicitly; never include credentials, datasets or large generated files. Missing allowed files are captured as absent and may be created by DS. Deleted files and executable bits are represented by Git diff. The target must have an existing commit, but it can have uncommitted files/changes; their actual content becomes the baseline.
 
@@ -506,7 +505,31 @@ When Astra completes work after a worker failure, leave the original run and tak
 
 Raw model thinking is omitted from the compact event log; OMP's local saved session can retain full history and should remain private.
 
-Credentials are loaded only into the local worker environment from `~/.config/codex-team-dev/credentials.json` (directory 700, file 600). The OMP profile is `~/.omp/profiles/codex-ds/agent`. Never display credential values or include the private configuration in a task snapshot. The profile uses the user-provided OpenCode inference endpoint; changes to it should be explicit and verified.
+### Local worker profiles
+
+Under `~/.config/codex-team-dev/` (mode 700), keep each credential JSON file at mode 600. Each worker receives only its selected route’s environment variable. Keep the files outside task snapshots.
+
+| Route | OMP profile | Credential filename and JSON field | Environment variable |
+| --- | --- | --- | --- |
+| OpenCode V4.1 and historical V4 | `codex-ds` | `credentials.json`, field `opencode_api_key` | `OMP_OPENCODE_API_KEY` |
+| Secondary Ascend | `codex-ds-secondary` | `secondary-credentials.json`, field `api_key` | `OMP_SECONDARY_DS_API_KEY` |
+
+For the secondary profile, create `~/.omp/profiles/codex-ds-secondary/agent/models.yml` using this layout. Replace the placeholder API root with the service’s HTTPS root.
+
+```yaml
+providers:
+  secondary-ds:
+    baseUrl: https://api.example.invalid/v1
+    api: openai-completions
+    apiKey: OMP_SECONDARY_DS_API_KEY
+    models:
+      - id: deepseek-v4-flash-ascend1
+        name: Secondary DeepSeek
+        reasoning: true
+        input: [text]
+```
+
+In the same profile’s `config.yml`, set `modelRoles.default` to `secondary-ds/deepseek-v4-flash-ascend1` and `retry.modelFallback` to `false`. Set `default_worker_model` in the local helper’s `runtime.json` to the chosen new-task selector. Run `team_dev.py doctor` to inspect the effective local selection.
 
 The local worker also reads `~/.config/codex-team-dev/runtime.json`. For example, replace the placeholder in `{"http_proxy":"http://proxy.example.invalid:8080"}` to give only this worker explicit HTTP/HTTPS proxy variables; otherwise it inherits the launching process proxy variables. Proxy requests originate on the Mac. Do not point a remote server at its own loopback address for model calls. This does not edit macOS system proxy settings.
 

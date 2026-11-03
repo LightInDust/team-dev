@@ -3,7 +3,7 @@ name: team-dev
 description: "Coordinate Astra, a local OMP DeepSeek coding worker, and a native Sol reviewer for local or SSH Git code tasks, with version-checked changes and target-environment tests. Use for requested team-dev or this three-model workflow."
 ---
 
-Keep the user in Codex on the Mac. Astra coordinates and accepts the whole task, local OMP DeepSeek implements, and native Sol independently reviews. Remote targets need SSH, Git and their existing test environment; do not install OMP or copy model credentials there. Use `scripts/team_dev.py`, profile `codex-ds`, selector `opencode-ds/deepseek-v4.1-flash`. Credentials stay in the local private configuration.
+Keep the user in Codex on the Mac. Astra coordinates and accepts the whole task, local OMP DeepSeek implements, and native Sol independently reviews. Remote targets need SSH, Git and their existing test environment; do not install OMP or copy model credentials there. Use `scripts/team_dev.py`. Omit `worker_model` on new tasks to use this installation’s default. For an explicit override, use the requested selector from the task contract. The helper freezes the selection at preparation and launches the corresponding local OMP profile with its own credential. `doctor` reports the local default.
 
 ## Choose the applicable guidance
 

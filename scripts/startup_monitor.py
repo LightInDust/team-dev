@@ -3,7 +3,7 @@ import json
 import math
 from pathlib import Path
 import threading
-from worker_model import diagnostic_model_id, PROVIDER
+from worker_model import matches_saved_selector
 
 
 MILESTONES = ('supervisor_entered', 'rpc_start_requested', 'rpc_ready',
@@ -158,9 +158,8 @@ def read_startup(run, meta=None):
     ready = False
     try:
         state = json.loads((root/'rpc-state.json').read_text())
-        expected_model = diagnostic_model_id(meta or {})
-        ready = (expected_model is not None and isinstance(state, dict) and
-                 state.get('model') == expected_model and state.get('provider') == PROVIDER)
+        ready = isinstance(state, dict) and matches_saved_selector(
+            meta or {}, state.get('provider'), state.get('model'))
     except (OSError, ValueError):
         pass
     monitor = StartupMonitor(0)

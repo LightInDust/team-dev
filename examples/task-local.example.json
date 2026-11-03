@@ -1,6 +1,5 @@
 {
   "agent_runtime": "local",
-  "worker_model": "opencode-ds/deepseek-v4.1-flash",
   "worker_thinking": "low",
   "budget_mode": "auto",
   "effort_assessment": {

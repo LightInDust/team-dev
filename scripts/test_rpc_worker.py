@@ -226,6 +226,15 @@ class RpcTests(unittest.TestCase):
                 self.execute({'worker_model': DEFAULT_MODEL})
             prompt.assert_not_called()
 
+    def test_secondary_provider_mismatch_stops_before_prompt(self):
+        from worker_model import SECONDARY_MODEL, model_id
+        self.task['worker_model'] = SECONDARY_MODEL
+        self.client.state.model.id = model_id(SECONDARY_MODEL)
+        with mock.patch.object(self.client, 'prompt') as prompt:
+            with self.assertRaisesRegex(RuntimeError, 'model/thinking'):
+                self.execute({'worker_model': SECONDARY_MODEL})
+            prompt.assert_not_called()
+
     def test_changed_frozen_identity_fails_before_rpc_client_creation(self):
         from worker_model import DEFAULT_MODEL, LEGACY_MODEL
         self.task['worker_model'] = DEFAULT_MODEL
