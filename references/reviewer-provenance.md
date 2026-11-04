@@ -2,7 +2,9 @@
 
 Keep these questions separate: which model/effort was requested, which explicit request the parent dispatched and the tool accepted, what the reviewer says about itself, and whether the runtime exposed the actual serving model. Generic system/developer text such as “agent based on GPT-6”, a role named Sol, a preferred default, or a task title cannot establish an exact SKU or effort. Do not infer `gpt-6-sol` or `gpt-5.6-sol` from that text.
 
-The current collaboration tool accepts an explicit model/effort request and returns an agent identity. That is parent-side dispatch evidence. Its returned agent name is not runtime model metadata. This schema version has no runtime identity adapter, so `actual_verified_model` and `actual_verified_effort` must be the literal `unknown`, even when the requested route is fully evidenced. Report “explicitly dispatched as gpt-5.6-sol / max; actual serving identity not exposed”, rather than claiming backend verification. If authoritative runtime metadata becomes available, preserve it in a separate addendum and update the supported protocol deliberately; never backfill old receipts from inference.
+The current collaboration tool accepts an explicit model/effort request and returns an agent identity. That is parent-side dispatch evidence. Its returned agent name is not runtime model metadata. This schema version has no runtime identity adapter, so `actual_verified_model` and `actual_verified_effort` must be the literal `unknown`, even when the requested route is fully evidenced. Report the exact explicitly dispatched reviewer route and `/ max`, with actual serving identity not exposed, rather than claiming backend verification. If authoritative runtime metadata becomes available, preserve it in a separate addendum and update the supported protocol deliberately; never backfill old receipts from inference.
+
+The normal OMP `POLICY`, prepared markers, `record-review` and `finalize` remain fixed to `gpt-5.6-sol` / `max`. For an independent [native Sol team](native-team.md) review, the coordinator explicitly selects `gpt-6.1-sol` / `max` with `--reviewer-model gpt-6.1-sol` on `review_handoff.py template` and `receipt`; the read-only `reviewer_provenance.py` CLI accepts the same option. Python `validate`, `reviewer_fields` and `write_receipt` accept keyword-only `reviewer_model`, defaulting to `gpt-5.6-sol`. Only these two reviewer models are allowed. Neither review JSON nor dispatch content selects the policy automatically. Both receipt validation passes use the supplied selection. The receipt validates the review verdict and reviewer dispatch only; it does not certify the native planner, worker, target tests or Astra acceptance.
 
 ## Bounded review and receipt closeout
 
@@ -51,7 +53,7 @@ assume it identifies the same record: verify the existing file under the chosen
 evidence root. Invalid paths remain rejected; correcting this syntax does not
 establish a model-routing or backend failure.
 
-New native reviews carry this object alongside verdict, candidate fingerprint, findings and the existing process binding:
+Normal OMP worker reviews carry this legacy reviewer object alongside verdict, candidate fingerprint, findings and the existing process binding. For a native Sol team review, use the explicit `gpt-6.1-sol` template described above and the [native workflow](native-team.md); do not copy this OMP example's `gpt-5.6-sol` route or process schema into a native receipt:
 
 ```json
 {

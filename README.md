@@ -1,10 +1,10 @@
 # team-dev
 
-在 Codex 中协调三个角色：**Astra 负责拆解与验收，本地 OMP / DeepSeek 实现，原生 Sol 独立审核**。代码目标可以位于本机，也可以通过 SSH 位于远端服务器。
+在 Codex 中选择团队路线：原有路线由 **Astra 拆解与验收、本地 OMP / DeepSeek 实现、原生 Sol 独立审核**；新增[原生 Sol 团队](references/native-team.md)由显式路由的 `gpt-6-astra` 规划与验收、`gpt-6-sol` 实现、`gpt-6.1-sol` / `max` 独立审核。代码目标可以位于本机，也可以通过 SSH 位于远端服务器。
 
-这是一套 Codex skill 和执行辅助脚本，需要已有的 Codex 原生子代理能力与本地 OMP。它不会把任意第三方模型注册成 Codex 原生模型，也不要求远端服务器安装 OMP。
+这是一套 Codex skill 和执行辅助脚本。原有 OMP 路线需要本地 OMP；原生路线使用宿主支持的原生子代理，是协调者流程，不是 OMP 执行模式。它不会把任意第三方模型注册成 Codex 原生模型，也不要求远端服务器安装 OMP。
 
-## 工作流程
+## 原有 OMP 工作流程
 
 ```text
 Astra 定义任务、文件范围、接口和验收条件
@@ -16,20 +16,20 @@ Astra 定义任务、文件范围、接口和验收条件
   → Astra 核对验收账本并完成收尾
 ```
 
-测试通过、工具结束和任务完成是不同状态。辅助脚本保留失败记录、限制恢复次数，并校验候选改动、测试与审核的绑定。详细操作以 [SKILL.md](SKILL.md) 和 [任务合同](references/task-contract.md) 为准。
+测试通过、工具结束和任务完成是不同状态。OMP 辅助脚本保留失败记录、限制恢复次数，并校验候选改动、测试与审核的绑定。原生路线另用隔离 Git 候选、实际目标检查、独立审核和单独回执；其过程覆盖范围见[原生团队流程](references/native-team.md)。详细操作以 [SKILL.md](SKILL.md) 和 [任务合同](references/task-contract.md) 为准。
 
 ## 环境要求
 
 | 位置 | 要求 |
 | --- | --- |
-| Codex 主控 | 支持原生子代理，并能请求 `gpt-5.6-sol` / `max`；主控使用 Astra |
-| 本地 worker | macOS 为已验证环境；Git、SSH、Python 3.11+（测试使用 3.12）、PATH 上的 OMP **18.2.8** |
-| 模型服务 | 可用的 OpenAI Chat Completions 兼容接口，支持所选模型、流式输出和工具调用 |
+| Codex 主控 | OMP 路线能请求 `gpt-5.6-sol` / `max`；原生路线能显式请求 `gpt-6-astra`、`gpt-6-sol`、`gpt-6.1-sol` / `max` |
+| OMP 本地 worker | macOS 为已验证环境；Git、SSH、Python 3.11+（测试使用 3.12）、PATH 上的 OMP **18.2.8** |
+| OMP 模型服务 | 可用的 OpenAI Chat Completions 兼容接口，支持所选模型、流式输出和工具调用 |
 | SSH 目标 | 已配置的 SSH 别名与认证、Git、POSIX Python 3.9+、GNU `timeout` 及项目已有测试环境 |
 
 严格 Bash 门禁按 OMP 18.2.8 固定校验，不能直接把“最新版 OMP”视为兼容。其他操作系统与 OMP 版本需要单独验证。模型服务的可用性、费用和额度由服务商决定；本仓库不附带账户或凭据。
 
-在 Codex 对话里，新任务未指定服务商时，Astra 会先让你选择，并把本机默认路线列在首位。你也可以直接说“用默认”或“用 OpenCode”。同一任务继续执行时沿用已选路线。在本机 `runtime.json` 设置 `opencode_network_billing_fallback: true`，新任务选择 OpenCode 后，遇到明确的网络错误或账务拒绝会自动向第二条路线转交一次。若该任务必须只用 OpenCode，设 `disable_provider_fallback: true`。转交前会核对原始文件版本并排除已有写入或命令执行，详见[自动回退条件](references/task-contract.md#one-way-provider-fallback)。直接调用命令行时，任务 JSON 省略 `worker_model` 会采用本机 `runtime.json` 中的 `default_worker_model`，未设置时使用 `opencode-ds/deepseek-v4.1-flash`。如需为单个任务切换服务，在任务 JSON 中显式填写下表的 selector。已准备任务沿用各自保存的选择。Sol 的请求路由不等于已验证的后端模型身份；宿主不暴露实际身份时保留未知状态。
+在 Codex 对话里，新任务未指定路线时先选择：本机 OMP 默认路线列首位并标明默认，另有另一条 OMP 路线和原生 Sol 团队。明确说“用原生 Sol 团队”即可选择原生；“用默认”仍选择 OMP 默认。同一任务继续执行时沿用已选路线。在本机 `runtime.json` 设置 `opencode_network_billing_fallback: true` 时，选择 OpenCode 的新任务遇到明确的网络错误或账务拒绝可向次要服务商转交一次；“只用 OpenCode”设 `disable_provider_fallback: true`。转交前须按[自动回退条件](references/task-contract.md#one-way-provider-fallback)核对原始文件版本、已有写入和命令执行；原生路线无自动 DeepSeek 回退。直接调用 OMP 命令行时，任务 JSON 省略 `worker_model` 会采用 `default_worker_model`，未设置时使用 `opencode-ds/deepseek-v4.1-flash`。已准备任务沿用保存的选择。请求路由不等于已验证的后端身份；宿主不暴露实际身份时保留未知状态。
 
 ## 安装
 
@@ -43,9 +43,9 @@ git clone git@github.com:LightInDust/team-dev.git "$HOME/.codex/skills/team-dev"
 
 仓库根目录就是 skill 目录。重新加载 Codex 的技能列表后，可用 `$team-dev` 指定使用本技能。Superpowers 的借鉴已包含在 [适配说明](references/superpowers-adaptation.md) 中，不要求安装其全套技能。
 
-## 本地私有配置
+## OMP 路线的本地私有配置
 
-配置文件位于仓库外。示例只有占位值，不可直接用于真实请求：
+以下本地 OMP/API 配置只供 OMP 路线使用，原生 Sol 团队不需要安装 OMP 或配置这些 API 凭据。配置文件位于仓库外。示例只有占位值，不可直接用于真实请求：
 
 | 目标文件 | 参考模板 / 用途 |
 | --- | --- |
@@ -80,9 +80,11 @@ python3 -B "$HOME/.codex/skills/team-dev/scripts/team_dev.py" doctor
 
 > 使用 $team-dev 修改 SSH 别名 dev-server 上指定 Git 仓库的代码。OMP 留在本机，测试在远端执行；先确认目标状态与所需上下文。
 
+> 使用 $team-dev 的原生 Sol 团队修复当前 Git 项目问题：Astra 规划与验收、Sol 编码、另一位 Sol max 独立审核，并在真实目标环境检查。
+
 需要手动准备任务时，以 [本地任务模板](examples/task-local.example.json) 为起点，替换所有路径和验收内容，并阅读 [任务合同](references/task-contract.md)。模板中的测试命令只是语法示例，必须换成该项目真正需要的检查。
 
-辅助入口包括 `policy`、`prepare`、`start`、`status`、`diagnose`、`propose`、`apply`、`test`、`test-receipts`、`record-review` 和 `finalize`。测试收尾中断时，先用只读的 `test-receipts` 检查[逐次回执与未知结果](references/target-test-receipts.md)。依赖步骤必须先确认上一步成功；审核不能用占位 PASS 文件替代。此辅助脚本不会自动提交或推送代码。
+OMP 辅助入口包括 `policy`、`prepare`、`start`、`status`、`diagnose`、`propose`、`apply`、`test`、`test-receipts`、`record-review` 和 `finalize`。原生路线不使用这些入口模拟 worker；其独立审核可显式传 `--reviewer-model gpt-6.1-sol` 给 `review_handoff.py template` 与 `receipt`。测试收尾中断时，先用只读的 `test-receipts` 检查[逐次回执与未知结果](references/target-test-receipts.md)。依赖步骤必须先确认上一步成功；审核不能用占位 PASS 文件替代。辅助脚本不会自动提交或推送代码。
 
 ## 验证本仓库
 

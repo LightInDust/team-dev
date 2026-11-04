@@ -2,7 +2,7 @@
 
 This adaptation draws on [obra/superpowers](https://github.com/obra/superpowers/tree/bb92a77741419a4ab5f06e711a283343f1ada0c3), pinned at commit `bb92a77741419a4ab5f06e711a283343f1ada0c3`. The upstream skills are optional reference material; installing all of them or their plugin hooks is not required by team-dev.
 
-The guidance below is scoped to team-dev's existing roles and gates. Documentation review and isolated synthetic checks do not establish improved stability across future tasks. Attribute runtime claims to the actual candidate, task and verification evidence.
+The guidance below is scoped to team-dev's selected route and its gates. OMP-specific prepared-task and DS references apply to the OMP route. The [native Sol team](native-team.md) has its own coordinator evidence and independent receipt; it does not inherit OMP enforcement. Documentation review and isolated synthetic checks do not establish improved stability across future tasks. Attribute runtime claims to the actual candidate, task and verification evidence.
 
 ## Apply within the existing workflow
 
@@ -12,7 +12,7 @@ Use the existing prepared task and selected context as the handoff. State the sl
 
 OMP workers keep `--no-skills`: installing a Codex skill does not inject it into DeepSeek. Use [worker guidance selection](worker-guidance.md) to select explicit domain sections before new preparation; keep common constraints and the original acceptance contract. Omitted selection retains all sections. Saved selection/content identity documents what was prepared; it is not an automatic proof that the coordinator chose the right context, nor a reason to rewrite a running task.
 
-Before preparation, inspect shared files and producer/consumer dependencies between planned slices. Sequence overlapping changes from the latest baseline. A slice that needs an unresolved architectural decision should return the missing decision to Astra, not expand its own scope. DS remains the implementation worker; it does not dispatch nested reviewers.
+Before preparation, inspect shared files and producer/consumer dependencies between planned slices. Sequence overlapping changes from the latest baseline. A slice that needs an unresolved architectural decision should return the missing decision to Astra, not expand its own scope. On the OMP route, DS remains the implementation worker; it does not dispatch nested reviewers. On the native route, the explicitly routed Sol coding worker has the same no-nested-agent boundary.
 
 ### 2. Make worker reports actionable without changing machine states
 
@@ -52,7 +52,7 @@ Test-first development uses the task's real framework and authorized exact comma
 
 ## Boundaries retained from team-dev
 
-- Preserve Astra coordination, OMP/DeepSeek implementation and independent Sol max review. Do not infer new provider/model routes from upstream examples.
+- Preserve the explicitly selected route: OMP uses Astra coordination, OMP/DeepSeek implementation and independent `gpt-5.6-sol` / `max` review; native uses the [native team contract](native-team.md). Do not infer additional provider/model routes from upstream examples.
 - Keep existing recovery allowances, deadlines, target-environment testing, snapshot protection and fail-closed completion. Do not import Superpowers' five-fix-round budget or use a coordinator ruling to waive unmet requirements.
 - Do not import automatic commits, branch finishing, workspace deletion, blanket full-suite reruns or extra reviewer stages. Use the current task authorization and team-dev lifecycle.
 - Use the actual tool schema for dispatch and lifecycle behavior. Upstream Codex examples are guidance, not authority over the host's supported arguments, model allowlist or user instructions.

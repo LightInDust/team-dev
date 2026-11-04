@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 import tempfile
 
-from reviewer_provenance import POLICY, validate
+from reviewer_provenance import POLICY, REVIEWER_MODELS, require_reviewer_model, validate
 
 
 JSON_BASENAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,120}\.json')
@@ -53,32 +53,35 @@ def read_object(root, filename, limit=1024 * 1024):
     return value, hashlib.sha256(raw).hexdigest()
 
 
-def reviewer_fields(root, dispatch_file, *, reused_agent=False):
+def reviewer_fields(root, dispatch_file, *, reused_agent=False, reviewer_model=POLICY['requested_model']):
     """Construct metadata from an actual saved dispatch, never a PASS verdict."""
     if type(reused_agent) is not bool:
         raise ValueError('reused_agent must be a boolean')
+    reviewer_model = require_reviewer_model(reviewer_model)
     record, digest = read_object(root, dispatch_file, limit=65536)
     response = record.get('response')
     agent = response.get('task_name') if isinstance(response, dict) else None
-    result = {'model': POLICY['requested_model'], 'effort': POLICY['requested_effort'],
+    result = {'model': reviewer_model, 'effort': POLICY['requested_effort'],
               'reviewer_provenance': {
-                  'version': 1, 'requested_model': POLICY['requested_model'],
+                  'version': 1, 'requested_model': reviewer_model,
                   'requested_effort': POLICY['requested_effort'], 'agent_id': agent,
                   'reused_agent': reused_agent,
                   'dispatch_evidence': {'file': dispatch_file, 'sha256': digest},
                   'self_reported_model': 'unknown', 'actual_verified_model': 'unknown',
                   'actual_verified_effort': 'unknown', 'verification_basis': 'parent_dispatch_only'}}
-    validate(root, result)
+    validate(root, result, reviewer_model=reviewer_model)
     return result
 
 
-def write_receipt(root, review_file, expected_review_sha256, draft_file, output_file):
+def write_receipt(root, review_file, expected_review_sha256, draft_file, output_file,
+                  *, reviewer_model=POLICY['requested_model']):
     """Publish only after PASS and live provenance validation; never certify tests.
 
     The nested coordinator payload remains the coordinator's assertion. This
     wrapper checks review/dispatch consistency, not candidate/test semantics.
     Files remain cooperative evidence, not protection against same-user races.
     """
+    reviewer_model = require_reviewer_model(reviewer_model)
     root = Path(root)
     output = local_json(root, output_file)
     if output.exists() or output.is_symlink():
@@ -93,7 +96,7 @@ def write_receipt(root, review_file, expected_review_sha256, draft_file, output_
     payload, payload_hash = read_object(root, draft_file)
     if not payload:
         raise ValueError('Coordinator payload must not be empty')
-    validation = validate(root, review)  # An exception must prevent all publication.
+    validation = validate(root, review, reviewer_model=reviewer_model)  # An exception must prevent all publication.
     dispatch_file = review['reviewer_provenance']['dispatch_evidence']['file']
     _, dispatch_hash = read_object(root, dispatch_file, limit=65536)
     if dispatch_hash != validation['dispatch_evidence_sha256']:
@@ -124,7 +127,7 @@ def write_receipt(root, review_file, expected_review_sha256, draft_file, output_
             stream.flush()
             os.fsync(stream.fileno())
         # Recheck after staging, immediately before exclusive publication.
-        validate(root, review)
+        validate(root, review, reviewer_model=reviewer_model)
         if read_object(root, review_file)[1] != review_hash or read_object(root, draft_file)[1] != payload_hash:
             raise ValueError('Receipt inputs changed during validation')
         if read_object(root, dispatch_file, limit=65536)[1] != dispatch_hash:
@@ -144,20 +147,24 @@ def main():
     template.add_argument('--evidence-root', required=True)
     template.add_argument('--dispatch', required=True)
     template.add_argument('--reused-agent', action='store_true')
+    template.add_argument('--reviewer-model', choices=REVIEWER_MODELS, default=POLICY['requested_model'])
     receipt = sub.add_parser('receipt', help='Validate PASS/provenance and exclusively publish a new receipt')
     receipt.add_argument('--evidence-root', required=True)
     receipt.add_argument('--review', required=True)
     receipt.add_argument('--expected-review-sha256', required=True)
     receipt.add_argument('--draft', required=True)
     receipt.add_argument('--output', required=True)
+    receipt.add_argument('--reviewer-model', choices=REVIEWER_MODELS, default=POLICY['requested_model'])
     args = parser.parse_args()
     try:
         if args.action == 'template':
             if not is_local_json_basename(args.dispatch):
                 parser.exit(1, DISPATCH_BASENAME_ERROR)
-            result = reviewer_fields(args.evidence_root, args.dispatch, reused_agent=args.reused_agent)
+            result = reviewer_fields(args.evidence_root, args.dispatch, reused_agent=args.reused_agent,
+                                     reviewer_model=args.reviewer_model)
         else:
-            result = write_receipt(args.evidence_root, args.review, args.expected_review_sha256, args.draft, args.output)
+            result = write_receipt(args.evidence_root, args.review, args.expected_review_sha256, args.draft,
+                                   args.output, reviewer_model=args.reviewer_model)
     except (OSError, ValueError, TypeError):
         parser.exit(1, GENERIC_FAILURE)
     print(json.dumps(result, ensure_ascii=False, indent=2))

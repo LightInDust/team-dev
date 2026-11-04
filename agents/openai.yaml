@@ -1,4 +1,4 @@
 interface:
   display_name: "三模型协作开发"
-  short_description: "Astra 主控、本地 DeepSeek 编码、Sol 审核，支持 SSH 远端测试"
-  default_prompt: "使用 $team-dev 完成当前代码任务，由本地 DeepSeek 实现、Sol 审核，并验证目标环境中的结果。"
+  short_description: "可选 OMP DeepSeek 或原生 Sol 团队，独立审核与目标环境验证"
+  default_prompt: "使用 $team-dev 完成当前代码任务。若我未指定路线，请先让我选择：配置的 OMP 默认路线、另一条 OMP 路线或原生 Sol 团队；再按所选路线实施并验证目标环境。"

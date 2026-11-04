@@ -51,6 +51,25 @@ class ReviewerProvenanceTests(unittest.TestCase):
         self.assertEqual(result['self_reported_model'], 'gpt-6-sol')
         self.assertEqual(result['actual_verified_model'], 'unknown')
 
+    def test_native_route_requires_explicit_selector_and_matching_dispatch(self):
+        with self.assertRaises(ValueError):
+            p.validate(self.root, self.review, reviewer_model='gpt-6.1-sol')
+        self.change_dispatch(lambda r: r['request'].update(model='gpt-6.1-sol'))
+        self.review['model'] = 'gpt-6.1-sol'
+        self.review['reviewer_provenance']['requested_model'] = 'gpt-6.1-sol'
+        with self.assertRaises(ValueError):
+            p.validate(self.root, self.review)
+        result = p.validate(self.root, self.review, reviewer_model='gpt-6.1-sol')
+        self.assertEqual(result['requested_model'], 'gpt-6.1-sol')
+        self.assertEqual(result['actual_verified_model'], 'unknown')
+        with self.assertRaises(ValueError):
+            p.validate(self.root, self.review, reviewer_model='gpt-5.6-sol')
+        with self.assertRaises(ValueError):
+            p.validate(self.root, self.review, reviewer_model='gpt-6-sol')
+        self.change_dispatch(lambda r: r['request'].update(reasoning_effort='high'))
+        with self.assertRaises(ValueError):
+            p.validate(self.root, self.review, reviewer_model='gpt-6.1-sol')
+
     def test_generic_identity_text_and_self_report_cannot_supply_dispatch(self):
         for source in ('generic_developer_identity', 'reviewer_self_report'):
             with self.subTest(source=source):

@@ -7,6 +7,13 @@ import re
 
 POLICY = {'version': 1, 'requested_model': 'gpt-5.6-sol', 'requested_effort': 'max',
           'dispatch': 'parent_tool_record_required', 'runtime_identity': 'unknown_no_adapter'}
+REVIEWER_MODELS = ('gpt-5.6-sol', 'gpt-6.1-sol')
+
+
+def require_reviewer_model(reviewer_model):
+    if reviewer_model not in REVIEWER_MODELS:
+        raise ValueError('Unsupported reviewer model selection')
+    return reviewer_model
 
 
 def enabled(task, meta):
@@ -19,17 +26,18 @@ def enabled(task, meta):
     return True
 
 
-def validate(evidence_root, review):
+def validate(evidence_root, review, *, reviewer_model=POLICY['requested_model']):
     """Check local integrity/consistency, not authentication of editable records.
 
     The coordinator saves a narrow tool-call extract. Its source is manually
     accountable; neither a self-report nor generic identity prose is that source.
     No current adapter establishes the actual serving model or reasoning effort.
     """
+    reviewer_model = require_reviewer_model(reviewer_model)
     value = review.get('reviewer_provenance')
     if not isinstance(value, dict) or type(value.get('version')) is not int or value['version'] != 1:
         raise ValueError('Require reviewer_provenance version 1')
-    if (value.get('requested_model') != POLICY['requested_model'] or
+    if (value.get('requested_model') != reviewer_model or
             value.get('requested_effort') != POLICY['requested_effort'] or
             review.get('model') != value['requested_model'] or review.get('effort') != value['requested_effort']):
         raise ValueError('Requested reviewer model/effort or compatibility labels disagree')
@@ -83,5 +91,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--evidence-root', required=True)
     parser.add_argument('--review', required=True)
+    parser.add_argument('--reviewer-model', choices=REVIEWER_MODELS, default=POLICY['requested_model'])
     args = parser.parse_args()
-    print(json.dumps(validate(Path(args.evidence_root), json.loads(Path(args.review).read_text())), indent=2))
+    print(json.dumps(validate(Path(args.evidence_root), json.loads(Path(args.review).read_text()),
+                              reviewer_model=args.reviewer_model), indent=2))

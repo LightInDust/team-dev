@@ -34,7 +34,12 @@ class ReviewHandoffTests(unittest.TestCase):
 
     def publish(self, **kwargs):
         return h.write_receipt(self.root, 'review.json', kwargs.pop('expected', self.digest('review.json')),
-                               kwargs.pop('draft', 'draft.json'), kwargs.pop('output', 'completion.json'))
+                               kwargs.pop('draft', 'draft.json'), kwargs.pop('output', 'completion.json'), **kwargs)
+
+    def native_dispatch(self):
+        record = json.loads((self.root / 'fixture-dispatch.json').read_text())
+        record['request']['model'] = 'gpt-6.1-sol'
+        self.write('fixture-dispatch.json', record)
 
     def assert_no_receipt(self):
         self.assertFalse((self.root / 'completion.json').exists())
@@ -51,6 +56,40 @@ class ReviewHandoffTests(unittest.TestCase):
         self.assertTrue(reused['reviewer_provenance']['reused_agent'])
         self.assertEqual(reused['reviewer_provenance']['agent_id'], '/root/fixture_review')
         p.validate(self.root, reused)
+
+    def test_native_template_and_receipt_require_explicit_route(self):
+        self.native_dispatch()
+        with self.assertRaises(ValueError):
+            h.reviewer_fields(self.root, 'fixture-dispatch.json')
+        fields = h.reviewer_fields(self.root, 'fixture-dispatch.json', reviewer_model='gpt-6.1-sol')
+        self.assertEqual(fields['model'], 'gpt-6.1-sol')
+        self.assertNotIn('verdict', fields)
+        self.write('review.json', dict(fields, verdict='pass'))
+        with self.assertRaises(ValueError):
+            self.publish()
+        self.assert_no_receipt()
+        result = self.publish(reviewer_model='gpt-6.1-sol')
+        self.assertEqual(result['receipt_sha256'], self.digest('completion.json'))
+        receipt = json.loads((self.root / 'completion.json').read_text())
+        self.assertEqual(receipt['review_validation']['result']['requested_model'], 'gpt-6.1-sol')
+
+    def test_native_receipt_second_validation_uses_same_route(self):
+        self.native_dispatch()
+        fields = h.reviewer_fields(self.root, 'fixture-dispatch.json', reviewer_model='gpt-6.1-sol')
+        self.write('review.json', dict(fields, verdict='pass'))
+        real = p.validate
+        calls = []
+        def fail_at_final(*args, **kwargs):
+            result = real(*args, **kwargs)
+            calls.append(result['requested_model'])
+            if len(calls) == 2:
+                raise ValueError('native final validation rejected')
+            return result
+        with mock.patch.object(h, 'validate', side_effect=fail_at_final):
+            with self.assertRaisesRegex(ValueError, 'native final validation rejected'):
+                self.publish(reviewer_model='gpt-6.1-sol')
+        self.assertEqual(calls, ['gpt-6.1-sol', 'gpt-6.1-sol'])
+        self.assert_no_receipt()
 
     def test_template_rejects_wrong_route_and_non_original_dispatch(self):
         record = json.loads((self.root / 'fixture-dispatch.json').read_text())
@@ -103,8 +142,8 @@ class ReviewHandoffTests(unittest.TestCase):
             self.write('review.json', self.review)
             self.write('draft.json', self.payload)
             original_validate = p.validate
-            def changed(*args):
-                result = original_validate(*args)
+            def changed(*args, **kwargs):
+                result = original_validate(*args, **kwargs)
                 path = self.root / filename
                 path.write_bytes(path.read_bytes() + b' ')
                 return result
@@ -115,10 +154,10 @@ class ReviewHandoffTests(unittest.TestCase):
     def test_final_validation_failure_removes_staging_file_without_publication(self):
         real = p.validate
         calls = []
-        def fail_second(*args):
+        def fail_second(*args, **kwargs):
             calls.append(True)
             if len(calls) == 2: raise ValueError('final validation failed')
-            return real(*args)
+            return real(*args, **kwargs)
         with mock.patch.object(h, 'validate', side_effect=fail_second):
             with self.assertRaises(ValueError): self.publish()
         self.assertEqual(len(calls), 2)
@@ -130,8 +169,8 @@ class ReviewHandoffTests(unittest.TestCase):
             self.write('review.json', self.review)
             self.write('draft.json', self.payload)
             calls = []
-            def changed(*args):
-                result = p.validate(*args)
+            def changed(*args, **kwargs):
+                result = p.validate(*args, **kwargs)
                 calls.append(True)
                 if len(calls) == 2:
                     path = self.root / filename
@@ -230,6 +269,21 @@ class ReviewHandoffTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         summary = json.loads(result.stdout)
         self.assertEqual(summary['receipt_sha256'], self.digest('completion.json'))
+
+    def test_cli_native_template_and_receipt_use_explicit_route(self):
+        self.native_dispatch()
+        base = [sys.executable, '-B', str(Path(h.__file__))]
+        result = subprocess.run(base + ['template', '--evidence-root', str(self.root),
+            '--dispatch', 'fixture-dispatch.json', '--reviewer-model', 'gpt-6.1-sol'],
+            capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.write('review.json', dict(json.loads(result.stdout), verdict='pass'))
+        result = subprocess.run(base + ['receipt', '--evidence-root', str(self.root),
+            '--review', 'review.json', '--expected-review-sha256', self.digest('review.json'),
+            '--draft', 'draft.json', '--output', 'completion.json',
+            '--reviewer-model', 'gpt-6.1-sol'], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['receipt_sha256'], self.digest('completion.json'))
 
 
 if __name__ == '__main__':

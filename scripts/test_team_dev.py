@@ -907,6 +907,30 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(m.load(self.run/'task.json')['reviewer_provenance_policy'],POLICY)
         self.assertEqual(m.load(self.run/'metadata.json')['reviewer_provenance_policy'],POLICY)
 
+    def test_normal_omp_review_and_finalize_reject_native_reviewer(self):
+        from reviewer_provenance import POLICY
+        from review_handoff import reviewer_fields
+        self.change(); m.apply(self.run); m.test_target(self.run); self.record_pass()
+        self.assertEqual(m.load(self.run/'task.json')['reviewer_provenance_policy'], POLICY)
+        accepted = m.load(self.run/'review.json')
+        dispatch = m.load(self.run/'fixture-dispatch.json')
+        dispatch['request']['model'] = 'gpt-6.1-sol'
+        m.dump(self.run/'fixture-dispatch.json', dispatch)
+        native = dict(accepted, **reviewer_fields(self.run, 'fixture-dispatch.json',
+                                                   reviewer_model='gpt-6.1-sol'))
+        submitted = self.root/'native-review.json'; m.dump(submitted, native)
+        with self.assertRaisesRegex(ValueError, 'Require a Sol review'):
+            m.record_review(self.run, submitted)
+        self.assertEqual(m.load(self.run/'review.json'), accepted)
+        m.dump(self.run/'review.json', native)
+        with self.assertRaisesRegex(RuntimeError, 'Require Sol max process review'):
+            m.finalize(self.run)
+        relabeled = dict(native, model='gpt-5.6-sol')
+        m.dump(self.run/'review.json', relabeled)
+        with self.assertRaisesRegex(ValueError, 'compatibility labels'):
+            m.finalize(self.run)
+        self.assertEqual(m.status(self.run)['delivery'], 'verification_pending')
+
     def test_new_prepare_freezes_async_call_identity_policy(self):
         from async_evidence import POLICY, POLICY_KEY, version_for_run
         self.prepare(worker_evidence=False)
